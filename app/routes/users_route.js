@@ -17,7 +17,9 @@ const {
   createUserWithImage,
   createUserWithMedia,
   createForgotPasswordRequest,
-  getForgotPasswordRequests
+  getForgotPasswordRequests,
+  updateUserByAdmin,
+  getUserByAdmin
 } = require('../controllers/user_controller');
 
 // Public Routes
@@ -27,6 +29,8 @@ router.post('/forgot_password', upload.none(), createForgotPasswordRequest);
 router.post('/refresh-token', upload.none(), refreshToken);
 router.post('/logout', verifyToken, logoutUser);
 router.get('/admin/forgot_password_requests', verifyToken, verifyAdmin, getForgotPasswordRequests);
+router.get('/admin/user/:id', verifyToken, verifyAdmin, getUserByAdmin);
+router.put('/admin/user/:id', verifyToken, verifyAdmin, upload.none(), updateUserByAdmin);
 
 // Protected Routes
 router.get('/admin/all_users', verifyToken, verifyAdmin, getUser);

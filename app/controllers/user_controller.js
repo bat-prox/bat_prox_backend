@@ -40,6 +40,11 @@ const uploadMedia = multer({
 
 });
 
+const hasUsersColumn = async (columnName) => {
+    const [rows] = await db.query('SHOW COLUMNS FROM users LIKE ?', [columnName]);
+    return rows.length > 0;
+};
+
 //!GET all users
 const getUser = async (req, res) => {
     try {
@@ -47,10 +52,18 @@ const getUser = async (req, res) => {
         const limit = Math.min(parseInt(req.query.limit, 10) || 100, 1000);
         const offset = parseInt(req.query.offset, 10) || 0;
 
+        const hasBatproxUsername = await hasUsersColumn('batprox_username');
+        const hasBatproxPassword = await hasUsersColumn('batprox_password');
+        const hasIsPlayStore = await hasUsersColumn('isPlayStore');
+
+        const batproxUsernameSelect = hasBatproxUsername ? 'batprox_username' : 'NULL AS batprox_username';
+        const batproxPasswordSelect = hasBatproxPassword ? 'batprox_password' : 'NULL AS batprox_password';
+        const isPlayStoreSelect = hasIsPlayStore ? 'isPlayStore' : 'NULL AS isPlayStore';
+
         // Admin list: exclude admin users and include requested account fields
         const [result] = await db.query(
             `SELECT id, name, password, created_at, status, is_Verified, phone, token_version,
-                    NULL AS batprox_username, NULL AS batprox_password, NULL AS isPlayStore
+                    ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}
              FROM users
              WHERE COALESCE(role, 'user') <> 'admin'
              LIMIT ? OFFSET ?`,
@@ -69,6 +82,144 @@ const getUser = async (req, res) => {
             message: "Database error",
             error: err.message
         });
+    }
+};
+
+// Admin gets single user detail by id for edit screen
+const getUserByAdmin = async (req, res) => {
+    const { id } = req.params;
+    if (!id) {
+        return res.status(400).json({ message: 'User id required' });
+    }
+
+    try {
+        const hasBatproxUsername = await hasUsersColumn('batprox_username');
+        const hasBatproxPassword = await hasUsersColumn('batprox_password');
+        const hasIsPlayStore = await hasUsersColumn('isPlayStore');
+
+        const batproxUsernameSelect = hasBatproxUsername ? 'batprox_username' : 'NULL AS batprox_username';
+        const batproxPasswordSelect = hasBatproxPassword ? 'batprox_password' : 'NULL AS batprox_password';
+        const isPlayStoreSelect = hasIsPlayStore ? 'isPlayStore' : 'NULL AS isPlayStore';
+
+        const [rows] = await db.query(
+            `SELECT id, name, phone, password, status, is_Verified, token_version, created_at,
+                    ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}
+             FROM users
+             WHERE id = ? AND COALESCE(role, 'user') <> 'admin'
+             LIMIT 1`,
+            [id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        return res.status(200).json({
+            message: 'success',
+            data: rows[0]
+        });
+    } catch (err) {
+        return res.status(500).json({ message: 'Database error', error: err.message });
+    }
+};
+
+// Admin updates specific user fields from user detail screen
+const updateUserByAdmin = async (req, res) => {
+    const { id } = req.params;
+    const { phone, password, batprox_username, batprox_password, status, isPlayStore } = req.body || {};
+
+    if (!id) {
+        return res.status(400).json({ message: 'User id required' });
+    }
+
+    const updates = [];
+    const params = [];
+
+    try {
+        const [existingUser] = await db.query('SELECT id FROM users WHERE id = ? LIMIT 1', [id]);
+        if (existingUser.length === 0) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (phone !== undefined) {
+            if (!phone) return res.status(400).json({ message: 'Phone cannot be empty' });
+
+            const [phoneRows] = await db.query('SELECT id FROM users WHERE phone = ? AND id <> ? LIMIT 1', [phone, id]);
+            if (phoneRows.length > 0) {
+                return res.status(409).json({ message: 'Phone already used by another user' });
+            }
+            updates.push('phone = ?');
+            params.push(phone);
+        }
+
+        if (password !== undefined) {
+            if (!password) return res.status(400).json({ message: 'Password cannot be empty' });
+            const hashedPassword = await bcrypt.hash(password, saltRounds);
+            updates.push('password = ?');
+            params.push(hashedPassword);
+        }
+
+        if (status !== undefined) {
+            updates.push('status = ?');
+            params.push(status);
+        }
+
+        if (batprox_username !== undefined) {
+            const hasColumn = await hasUsersColumn('batprox_username');
+            if (!hasColumn) return res.status(400).json({ message: 'batprox_username column missing. Run migration first.' });
+            updates.push('batprox_username = ?');
+            params.push(batprox_username);
+        }
+
+        if (batprox_password !== undefined) {
+            const hasColumn = await hasUsersColumn('batprox_password');
+            if (!hasColumn) return res.status(400).json({ message: 'batprox_password column missing. Run migration first.' });
+            updates.push('batprox_password = ?');
+            params.push(batprox_password);
+        }
+
+        if (isPlayStore !== undefined) {
+            const hasColumn = await hasUsersColumn('isPlayStore');
+            if (!hasColumn) return res.status(400).json({ message: 'isPlayStore column missing. Run migration first.' });
+
+            const normalizedIsPlayStore =
+                isPlayStore === true ||
+                isPlayStore === 1 ||
+                isPlayStore === '1' ||
+                (typeof isPlayStore === 'string' && isPlayStore.toLowerCase() === 'true')
+                    ? 1
+                    : 0;
+
+            updates.push('isPlayStore = ?');
+            params.push(normalizedIsPlayStore);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({
+                message: 'Nothing to update. Provide at least one of: phone, password, batprox_username, batprox_password, status, isPlayStore'
+            });
+        }
+
+        params.push(id);
+        await db.query(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+
+        const [updatedRows] = await db.query(
+            `SELECT id, name, phone, password, status,
+                    ${await hasUsersColumn('batprox_username') ? 'batprox_username' : 'NULL AS batprox_username'},
+                    ${await hasUsersColumn('batprox_password') ? 'batprox_password' : 'NULL AS batprox_password'},
+                    ${await hasUsersColumn('isPlayStore') ? 'isPlayStore' : 'NULL AS isPlayStore'}
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [id]
+        );
+
+        return res.status(200).json({
+            message: 'User updated successfully by admin',
+            data: updatedRows[0]
+        });
+    } catch (err) {
+        return res.status(500).json({ message: 'Database error', error: err.message });
     }
 };
 
@@ -135,7 +286,7 @@ const loginUser = async (req, res) => {
 
 // registerUser
 const registerUser = async (req, res) => {
-    const { name, phone, password } = req.body;
+        const { name, phone, password, isPlayStore } = req.body;
 
   if (!name ) {
     return res.status(400).json({ message: 'Name required' });
@@ -143,11 +294,35 @@ const registerUser = async (req, res) => {
         return res.status(400).json({ message: 'Phone required' });
   } else   if (!password) {
     return res.status(400).json({ message: 'Password required' });
+    } else if (isPlayStore === undefined) {
+        return res.status(400).json({ message: 'isPlayStore required (0 or 1)' });
   }
 
 
 
     try {
+            const hasIsPlayStore = await hasUsersColumn('isPlayStore');
+            if (!hasIsPlayStore) {
+                return res.status(400).json({ message: 'isPlayStore column missing. Run migration first.' });
+            }
+
+            const normalizedIsPlayStore =
+                isPlayStore === 1 ||
+                isPlayStore === '1' ||
+                isPlayStore === true ||
+                (typeof isPlayStore === 'string' && isPlayStore.toLowerCase() === 'true')
+                    ? 1
+                    : isPlayStore === 0 ||
+                      isPlayStore === '0' ||
+                      isPlayStore === false ||
+                      (typeof isPlayStore === 'string' && isPlayStore.toLowerCase() === 'false')
+                        ? 0
+                        : null;
+
+            if (normalizedIsPlayStore === null) {
+                return res.status(400).json({ message: 'Invalid isPlayStore value. Use 0 or 1' });
+            }
+
             // prevent duplicate registration by phone
             const [existing] = await db.query('SELECT id FROM users WHERE phone = ? LIMIT 1', [phone]);
             if (existing.length > 0) {
@@ -155,9 +330,12 @@ const registerUser = async (req, res) => {
             }
 
             const hashedPassword = await bcrypt.hash(password, 10);
-            const [result] = await db.query('INSERT INTO users (name, phone, password, token_version) VALUES (?, ?, ?, ?)', [name, phone, hashedPassword, 0]);
+            const [result] = await db.query(
+                'INSERT INTO users (name, phone, password, token_version, isPlayStore) VALUES (?, ?, ?, ?, ?)',
+                [name, phone, hashedPassword, 0, normalizedIsPlayStore]
+            );
 
-        const user = { id: result.insertId, name, phone, token_version: 0};
+        const user = { id: result.insertId, name, phone, token_version: 0, isPlayStore: normalizedIsPlayStore };
 
         // const accessToken = jwt.sign({ id: user.id, phone: user.phone, token_version: 0 }, secretKey, { expiresIn: '1d' });
             const accessToken = jwt.sign({ id: user.id, phone: user.phone, token_version: 0, type: 'access' }, secretKey, { expiresIn: '1d' });
@@ -432,5 +610,7 @@ module.exports = {
     createUserWithImage,
     createUserWithMedia,
     createForgotPasswordRequest,
-    getForgotPasswordRequests
+    getForgotPasswordRequests,
+    updateUserByAdmin,
+    getUserByAdmin
 };

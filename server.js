@@ -6,6 +6,7 @@ const PORT = process.env.PORT || 5000;
 
 const users_routes=require('./app/routes/users_route');
 const tasks_routes=require('./app/routes/tasks_route');
+const payment_routes=require('./app/routes/payment_route');
 // Middleware (optional)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -25,6 +26,7 @@ app.use((req, res, next) => {
 app.use('/user',users_routes);
 app.use('/uploads', express.static('uploads'),users_routes);
 app.use('/tasks', tasks_routes);
+app.use('/payment', payment_routes);
 
 
 // Start server
