@@ -47,19 +47,20 @@ const getUser = async (req, res) => {
         const limit = Math.min(parseInt(req.query.limit, 10) || 100, 1000);
         const offset = parseInt(req.query.offset, 10) || 0;
 
-        // Select only non-sensitive columns to reduce payload and use LIMIT/OFFSET
+        // Admin list: exclude admin users and include requested account fields
         const [result] = await db.query(
-            `SELECT id, name, image, video, email, created_at, age, fb_id, address, status, is_Verified, phone, token_version FROM users LIMIT ? OFFSET ?`,
+            `SELECT id, name, password, created_at, status, is_Verified, phone, token_version,
+                    NULL AS batprox_username, NULL AS batprox_password, NULL AS isPlayStore
+             FROM users
+             WHERE COALESCE(role, 'user') <> 'admin'
+             LIMIT ? OFFSET ?`,
             [limit, offset]
         );
-
-        // Remove sensitive fields before sending response (defensive)
-        const sanitized = result.map(({ password, refresh_token, ...rest }) => rest);
 
         res.status(200).json({
             status: 200,
             message: "success",
-            data: sanitized
+            data: result
         });
 
     } catch (err) {
@@ -387,17 +388,18 @@ const getForgotPasswordRequests = async (req, res) => {
 
     try {
         let query = `
-            SELECT id, user_id, phone, status, requested_at, processed_at
-            FROM forgot_password_requests
+            SELECT fpr.id, fpr.user_id, u.name, fpr.phone, fpr.status, fpr.requested_at, fpr.processed_at
+            FROM forgot_password_requests fpr
+            LEFT JOIN users u ON u.id = fpr.user_id
         `;
         const params = [];
 
         if (phone) {
-            query += ' WHERE phone = ?';
+            query += ' WHERE fpr.phone = ?';
             params.push(phone);
         }
 
-        query += ' ORDER BY requested_at DESC';
+        query += ' ORDER BY fpr.requested_at DESC';
 
         const [rows] = await db.query(query, params);
 

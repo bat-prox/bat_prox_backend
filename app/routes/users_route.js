@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const upload = multer();
 const verifyToken = require('../middleware/auth_middleware'); // <- import middleware
+const verifyAdmin = require('../middleware/admin_middleware');
 
 const {
   getUser,
@@ -25,10 +26,10 @@ router.post('/login', upload.none(), loginUser);
 router.post('/forgot_password', upload.none(), createForgotPasswordRequest);
 router.post('/refresh-token', upload.none(), refreshToken);
 router.post('/logout', verifyToken, logoutUser);
-router.get('/admin/forgot_password_requests', verifyToken, getForgotPasswordRequests);
+router.get('/admin/forgot_password_requests', verifyToken, verifyAdmin, getForgotPasswordRequests);
 
 // Protected Routes
-router.get('/all_users', verifyToken, getUser);
+router.get('/admin/all_users', verifyToken, verifyAdmin, getUser);
 router.put('/update_user/:id', verifyToken, uploadMedia.single('image'), updateUser);
 router.delete('/delete_user/:id', verifyToken, upload.none(), deleteUser);
 router.post(
