@@ -1,13 +1,26 @@
+const { randomUUID } = require('crypto');
+const db = require('../config/db');
+const { sendSuccess, sendError } = require('../utils/response');
+
+// helper: combine date + time into DATETIME string
+function combineDateTime(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return null;
+  const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
+  const timeNormalized = timeStr.length === 5 ? `${timeStr}:00` : timeStr;
+  const timeOk = /^\d{2}:\d{2}:\d{2}$/.test(timeNormalized);
+  if (!dateOk || !timeOk) return null;
+  return `${dateStr} ${timeNormalized}`;
+}
+
 // GET /tasks/summary
 const getTaskSummary = async (req, res) => {
   try {
     const userId = req.user && req.user.id;
-    // Count tasks by status for this user
     const [rows] = await db.query(
-      `SELECT status, COUNT(*) as count FROM tasks WHERE user_id = ? AND is_deleted = 0 GROUP BY status`,
+      'SELECT status, COUNT(*) as count FROM tasks WHERE user_id = ? AND is_deleted = 0 GROUP BY status',
       [userId]
     );
-    // Build summary object with all statuses
+
     const summary = { pending: 0, processing: 0, completed: 0, canceled: 0 };
     for (const row of rows) {
       const key = row.status && row.status.toLowerCase();
@@ -16,14 +29,12 @@ const getTaskSummary = async (req, res) => {
       else if (key === 'completed') summary.completed += row.count;
       else if (key === 'canceled' || key === 'cancelled') summary.canceled += row.count;
     }
-    res.json({ summary });
+
+    return sendSuccess(res, 'Task summary fetched successfully', { summary }, 200);
   } catch (err) {
-    res.status(500).json({ message: 'Database error', error: err.message });
+    return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
   }
 };
-
-const { randomUUID } = require('crypto');
-const db = require('../config/db');
 
 // GET /tasks?page=1&limit=20
 const getTasks = async (req, res) => {
@@ -39,50 +50,45 @@ const getTasks = async (req, res) => {
     );
     const [[{ 'FOUND_ROWS()': total }]] = await db.query('SELECT FOUND_ROWS()');
 
-    res.json({ page, limit, total: Number(total), data: rows });
+    return sendSuccess(res, 'Tasks fetched successfully', {
+      page,
+      limit,
+      total: Number(total),
+      items: rows
+    }, 200);
   } catch (err) {
-    res.status(500).json({ message: 'Database error', error: err.message });
+    return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
   }
 };
-
-// helper: combine date + time into DATETIME string
-function combineDateTime(dateStr, timeStr) {
-  if (!dateStr || !timeStr) return null;
-  const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
-  const timeNormalized = timeStr.length === 5 ? timeStr + ':00' : timeStr;
-  const timeOk = /^\d{2}:\d{2}:\d{2}$/.test(timeNormalized);
-  if (!dateOk || !timeOk) return null;
-  return `${dateStr} ${timeNormalized}`;
-}
 
 // POST /tasks
 const createTask = async (req, res) => {
   try {
     const userId = req.user && req.user.id;
     const { title, description, startTaskAt, startDate, startTime, endDate, endTime } = req.body || {};
-    if (!title) return res.status(400).json({ message: 'Title required' });
+    if (!title) return sendError(res, 'Title required', 400, 'BAD_REQUEST');
 
-    // combine separate date/time if provided
     let start = startTaskAt || null;
     if (!start && startDate && startTime) {
       const combined = combineDateTime(startDate, startTime);
-      if (!combined) return res.status(400).json({ message: 'Invalid startDate/startTime format (expected YYYY-MM-DD and HH:MM or HH:MM:SS)' });
+      if (!combined) return sendError(res, 'Invalid startDate/startTime format (expected YYYY-MM-DD and HH:MM or HH:MM:SS)', 400, 'BAD_REQUEST');
       start = combined;
     }
 
     let end = null;
     if (endDate && endTime) {
       const combinedEnd = combineDateTime(endDate, endTime);
-      if (!combinedEnd) return res.status(400).json({ message: 'Invalid endDate/endTime format (expected YYYY-MM-DD and HH:MM or HH:MM:SS)' });
+      if (!combinedEnd) return sendError(res, 'Invalid endDate/endTime format (expected YYYY-MM-DD and HH:MM or HH:MM:SS)', 400, 'BAD_REQUEST');
       end = combinedEnd;
     }
 
     const id = randomUUID();
     await db.query('INSERT INTO tasks (id, user_id, title, description, startTaskAt, endTaskAt) VALUES (?, ?, ?, ?, ?, ?)', [id, userId, title, description || null, start, end]);
     const [rows] = await db.query('SELECT id, user_id, title, description, status, version, is_deleted, startTaskAt, endTaskAt, created_at, updated_at FROM tasks WHERE id = ?', [id]);
-    res.status(201).json({ message: 'Task created', task: rows[0] });
+
+    return sendSuccess(res, 'Task created', rows[0], 201);
   } catch (err) {
-    res.status(500).json({ message: 'Database error', error: err.message });
+    return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
   }
 };
 
@@ -94,42 +100,58 @@ const updateTask = async (req, res) => {
     const { title, description, status, startTaskAt, startDate, startTime, endTaskAt, endDate, endTime } = req.body || {};
 
     const [rows] = await db.query('SELECT user_id, version, startTaskAt, endTaskAt, title, description FROM tasks WHERE id = ? AND is_deleted = 0', [taskId]);
-    if (!rows || rows.length === 0) return res.status(404).json({ message: 'Task not found' });
-    const task = rows[0];
-    if (task.user_id !== userId) return res.status(403).json({ message: 'Forbidden' });
+    if (!rows || rows.length === 0) return sendError(res, 'Task not found', 404, 'NOT_FOUND');
 
-    // prepare updated values
+    const task = rows[0];
+    if (task.user_id !== userId) return sendError(res, 'Forbidden', 403, 'FORBIDDEN');
+
     let newStart = startTaskAt !== undefined ? startTaskAt : task.startTaskAt;
     if (startDate && startTime) {
       const combined = combineDateTime(startDate, startTime);
-      if (!combined) return res.status(400).json({ message: 'Invalid startDate/startTime format (expected YYYY-MM-DD and HH:MM or HH:MM:SS)' });
+      if (!combined) return sendError(res, 'Invalid startDate/startTime format (expected YYYY-MM-DD and HH:MM or HH:MM:SS)', 400, 'BAD_REQUEST');
       newStart = combined;
     }
 
     let newEnd = endTaskAt !== undefined ? endTaskAt : task.endTaskAt;
     if (endDate && endTime) {
       const combinedEnd = combineDateTime(endDate, endTime);
-      if (!combinedEnd) return res.status(400).json({ message: 'Invalid endDate/endTime format (expected YYYY-MM-DD and HH:MM or HH:MM:SS)' });
+      if (!combinedEnd) return sendError(res, 'Invalid endDate/endTime format (expected YYYY-MM-DD and HH:MM or HH:MM:SS)', 400, 'BAD_REQUEST');
       newEnd = combinedEnd;
     }
 
     const updates = [];
     const params = [];
-    if (title !== undefined) { updates.push('title = ?'); params.push(title); }
-    if (description !== undefined) { updates.push('description = ?'); params.push(description); }
-    if (status !== undefined) { updates.push('status = ?'); params.push(status); }
-    if (newStart !== undefined) { updates.push('startTaskAt = ?'); params.push(newStart); }
-    if (newEnd !== undefined) { updates.push('endTaskAt = ?'); params.push(newEnd); }
-    if (updates.length === 0) return res.status(400).json({ message: 'Nothing to update' });
+    if (title !== undefined) {
+      updates.push('title = ?');
+      params.push(title);
+    }
+    if (description !== undefined) {
+      updates.push('description = ?');
+      params.push(description);
+    }
+    if (status !== undefined) {
+      updates.push('status = ?');
+      params.push(status);
+    }
+    if (newStart !== undefined) {
+      updates.push('startTaskAt = ?');
+      params.push(newStart);
+    }
+    if (newEnd !== undefined) {
+      updates.push('endTaskAt = ?');
+      params.push(newEnd);
+    }
+    if (updates.length === 0) return sendError(res, 'Nothing to update', 400, 'BAD_REQUEST');
 
     updates.push('version = version + 1');
     params.push(taskId);
 
     await db.query(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, params);
     const [updated] = await db.query('SELECT id, user_id, title, description, status, version, is_deleted, startTaskAt, endTaskAt, created_at, updated_at FROM tasks WHERE id = ?', [taskId]);
-    res.json({ message: 'Task updated', task: updated[0] });
+
+    return sendSuccess(res, 'Task updated', updated[0], 200);
   } catch (err) {
-    res.status(500).json({ message: 'Database error', error: err.message });
+    return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
   }
 };
 
@@ -140,13 +162,13 @@ const deleteTask = async (req, res) => {
     const { id } = req.params;
 
     const [existing] = await db.query('SELECT user_id FROM tasks WHERE id = ? AND is_deleted = 0', [id]);
-    if (existing.length === 0) return res.status(404).json({ message: 'Task not found' });
-    if (existing[0].user_id !== userId) return res.status(403).json({ message: 'Forbidden' });
+    if (existing.length === 0) return sendError(res, 'Task not found', 404, 'NOT_FOUND');
+    if (existing[0].user_id !== userId) return sendError(res, 'Forbidden', 403, 'FORBIDDEN');
 
     await db.query('UPDATE tasks SET is_deleted = 1, version = version + 1 WHERE id = ?', [id]);
-    res.json({ message: 'Task deleted' });
+    return sendSuccess(res, 'Task deleted', {}, 200);
   } catch (err) {
-    res.status(500).json({ message: 'Database error', error: err.message });
+    return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
   }
 };
 
@@ -158,30 +180,35 @@ const updateTaskStatus = async (req, res) => {
     const taskId = req.params.id;
     const action = req.params.action;
     const [rows] = await db.query('SELECT user_id, status FROM tasks WHERE id = ? AND is_deleted = 0', [taskId]);
-    if (!rows || rows.length === 0) return res.status(404).json({ message: 'Task not found' });
+
+    if (!rows || rows.length === 0) return sendError(res, 'Task not found', 404, 'NOT_FOUND');
+
     const task = rows[0];
-    if (task.user_id !== userId) return res.status(403).json({ message: 'Forbidden' });
+    if (task.user_id !== userId) return sendError(res, 'Forbidden', 403, 'FORBIDDEN');
+
     let newStatus;
     if (action === '1') {
-      if (task.status !== 'pending') return res.status(400).json({ message: 'Only pending tasks can be moved to processing' });
+      if (task.status !== 'pending') return sendError(res, 'Only pending tasks can be moved to processing', 400, 'BAD_REQUEST');
       newStatus = 'processing';
     } else if (action === '2') {
-      if (task.status !== 'processing') return res.status(400).json({ message: 'Only processing tasks can be completed' });
+      if (task.status !== 'processing') return sendError(res, 'Only processing tasks can be completed', 400, 'BAD_REQUEST');
       newStatus = 'completed';
     } else if (action === '3') {
-      if (task.status !== 'processing') return res.status(400).json({ message: 'Only processing tasks can be canceled' });
+      if (task.status !== 'processing') return sendError(res, 'Only processing tasks can be canceled', 400, 'BAD_REQUEST');
       newStatus = 'canceled';
     } else if (action === '4') {
-      if (task.status !== 'pending') return res.status(400).json({ message: 'Only pending tasks can be canceled' });
+      if (task.status !== 'pending') return sendError(res, 'Only pending tasks can be canceled', 400, 'BAD_REQUEST');
       newStatus = 'canceled';
     } else {
-      return res.status(400).json({ message: 'Invalid action. Use 1=pending->processing, 2=processing->completed, 3=processing->canceled, 4=pending->canceled.' });
+      return sendError(res, 'Invalid action. Use 1=pending->processing, 2=processing->completed, 3=processing->canceled, 4=pending->canceled.', 400, 'BAD_REQUEST');
     }
+
     await db.query('UPDATE tasks SET status = ?, version = version + 1 WHERE id = ?', [newStatus, taskId]);
     const [updated] = await db.query('SELECT id, user_id, title, description, status, version, is_deleted, startTaskAt, endTaskAt, created_at, updated_at FROM tasks WHERE id = ?', [taskId]);
-    res.json({ message: `Task status updated to ${newStatus}`, task: updated[0] });
+
+    return sendSuccess(res, `Task status updated to ${newStatus}`, updated[0], 200);
   } catch (err) {
-    res.status(500).json({ message: 'Database error', error: err.message });
+    return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
   }
 };
 

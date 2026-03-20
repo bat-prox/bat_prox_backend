@@ -1,5 +1,6 @@
 const db = require('../config/db');
+const { sendSuccess } = require('../utils/response');
 const sayHello =(req,res)=>{
-   res.send("Hello Hans Raj");
+   return sendSuccess(res, 'Hello', { text: 'Hello Hans Raj' }, 200);
 };
 module.exports={sayHello};
