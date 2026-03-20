@@ -1,17 +1,13 @@
-# Admin Deposit Requests API Implementation
+# Payment APIs
 
-## Completed Steps:
-- [x] Add getDepositRequests function to app/controllers/payment_controller.js
-- [x] Update exports in app/controllers/payment_controller.js
-- [x] Add route in app/routes/payment_route.js
+## Deposit APIs Complete:
+- [x] POST /payment/user/deposit
+- [x] GET /payment/admin/deposits
+- [x] PUT /payment/admin/deposits/:id/status
 
-## Next:
-- [ ] Test endpoint (run server, create deposit, GET as admin)
+## Withdraw APIs (Pending):
+- [ ] POST /payment/user/withdraw {amount, account_title, bank_name, account_number}
+- [ ] GET /payment/admin/withdraws (with user name)
+- [ ] PUT /payment/admin/withdraws/:id/status
 
-## Details:
-Endpoint: GET /payments/admin/deposits?page=1&amp;limit=10
-Returns deposit transactions (type='deposit') ordered by created_at DESC.
-Admin-only (verifyToken + verifyAdmin).
-
-Progress will be updated after each step.
-
+Details: Reuse transactions table, type='withdraw'.

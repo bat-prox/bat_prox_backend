@@ -292,7 +292,53 @@ const getDepositRequests = async (req, res) => {
     }
 };
 
- // Admin updates deposit status
+// Admin processes withdraw request
+const withdrawAmount = async (req, res) => {
+    const { amount, account_title, bank_name, account_number } = req.body;
+
+    if (!amount || !account_title || !bank_name || !account_number) {
+        return res.status(400).json({ message: 'Missing fields: amount, account_title, bank_name, account_number' });
+    }
+
+    const user_id = req.user.id;
+    if (!user_id) {
+        return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        return res.status(400).json({ message: 'Amount must be positive number' });
+    }
+
+    const transactionId = `W${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+    try {
+        const [existingTx] = await db.query('SELECT id FROM transactions WHERE transaction_id = ? LIMIT 1', [transactionId]);
+        if (existingTx.length > 0) {
+            return res.status(409).json({ message: 'Transaction ID already exists' });
+        }
+
+        const [result] = await db.query(`
+            INSERT INTO transactions (
+                user_id, amount, transaction_id, to_account_no, to_bank, to_account_title, status, type
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'withdraw')
+        `, [user_id, parsedAmount, transactionId, account_number, bank_name, account_title]);
+
+        return res.status(201).json({
+            message: 'Withdraw request created (pending approval)',
+            data: {
+                id: result.insertId,
+                transaction_id: transactionId,
+                amount: parsedAmount,
+                status: 'pending'
+            }
+        });
+    } catch (err) {
+        return res.status(500).json({ message: 'Database error', error: err.message });
+    }
+};
+
+// Admin updates deposit status
 const updateDepositStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
@@ -333,6 +379,85 @@ const updateDepositStatus = async (req, res) => {
     }
 };
 
+// Admin updates withdraw status
+const updateWithdrawStatus = async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!id) {
+        return res.status(400).json({ message: 'Withdraw ID required' });
+    }
+
+    const allowedMapped = {
+        'pending': 'pending',
+        'approved': 'confirmed',
+        'cancelled': 'failed',
+        'rejected': 'failed'
+    };
+
+    if (!allowedMapped[status]) {
+        return res.status(400).json({ message: 'Invalid status. Use: pending, approved, cancelled, rejected' });
+    }
+
+    const dbStatus = allowedMapped[status];
+
+    try {
+        const [existing] = await db.query('SELECT id FROM transactions WHERE id = ? AND type = \"withdraw\" LIMIT 1', [id]);
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Withdraw not found' });
+        }
+
+        await db.query('UPDATE transactions SET status = ? WHERE id = ?', [dbStatus, id]);
+
+        const [updated] = await db.query('SELECT status, created_at FROM transactions WHERE id = ?', [id]);
+
+        return res.status(200).json({
+            message: `Withdraw status updated to ${dbStatus}`,
+            data: updated[0]
+        });
+    } catch (err) {
+        return res.status(500).json({ message: 'Database error', error: err.message });
+    }
+};
+
+const getWithdrawRequests = async (req, res) => {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    try {
+        // Total count
+        const [countResult] = await db.query("SELECT COUNT(*) as total FROM transactions WHERE type = 'withdraw'");
+        const total = countResult[0].total;
+
+        // Paginated data with user name
+        const [rows] = await db.query(
+            `SELECT t.*, u.name as user_name FROM transactions t 
+             JOIN users u ON t.user_id = u.id
+             WHERE t.type = 'withdraw' 
+             ORDER BY t.created_at DESC 
+             LIMIT ? OFFSET ?`, 
+            [limit, offset]
+        );
+
+        return res.status(200).json({
+            message: 'success',
+            total,
+            page,
+            limit,
+            data: rows
+        });
+    } catch (err) {
+        if (err.code === 'ER_NO_SUCH_TABLE') {
+            return res.status(500).json({
+                message: 'Transactions table missing. Create a withdraw first.',
+                error: err.message
+            });
+        }
+        return res.status(500).json({ message: 'Database error', error: err.message });
+    }
+};
+
 module.exports = {
     addPaymentMethod,
     getPaymentMethods,
@@ -340,6 +465,9 @@ module.exports = {
     updatePaymentMethod,
     deletePaymentMethod,
     depositAmount,
+    withdrawAmount,
     getDepositRequests,
-    updateDepositStatus
+    updateDepositStatus,
+    updateWithdrawStatus,
+    getWithdrawRequests
 };
