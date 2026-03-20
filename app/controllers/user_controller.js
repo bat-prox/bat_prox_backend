@@ -55,15 +55,17 @@ const getUser = async (req, res) => {
         const hasBatproxUsername = await hasUsersColumn('batprox_username');
         const hasBatproxPassword = await hasUsersColumn('batprox_password');
         const hasIsPlayStore = await hasUsersColumn('isPlayStore');
+        const hasBalance = await hasUsersColumn('balance');
 
         const batproxUsernameSelect = hasBatproxUsername ? 'batprox_username' : 'NULL AS batprox_username';
         const batproxPasswordSelect = hasBatproxPassword ? 'batprox_password' : 'NULL AS batprox_password';
         const isPlayStoreSelect = hasIsPlayStore ? 'isPlayStore' : 'NULL AS isPlayStore';
+        const balanceSelect = hasBalance ? 'balance' : '0.00 AS balance';
 
         // Admin list: exclude admin users and include requested account fields
         const [result] = await db.query(
             `SELECT id, name, password, created_at, status, is_Verified, phone, token_version,
-                    ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}
+                    ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}, ${balanceSelect}
              FROM users
              WHERE COALESCE(role, 'user') <> 'admin'
              LIMIT ? OFFSET ?`,
@@ -96,14 +98,16 @@ const getUserByAdmin = async (req, res) => {
         const hasBatproxUsername = await hasUsersColumn('batprox_username');
         const hasBatproxPassword = await hasUsersColumn('batprox_password');
         const hasIsPlayStore = await hasUsersColumn('isPlayStore');
+        const hasBalance = await hasUsersColumn('balance');
 
         const batproxUsernameSelect = hasBatproxUsername ? 'batprox_username' : 'NULL AS batprox_username';
         const batproxPasswordSelect = hasBatproxPassword ? 'batprox_password' : 'NULL AS batprox_password';
         const isPlayStoreSelect = hasIsPlayStore ? 'isPlayStore' : 'NULL AS isPlayStore';
+        const balanceSelect = hasBalance ? 'balance' : '0.00 AS balance';
 
         const [rows] = await db.query(
             `SELECT id, name, phone, password, status, is_Verified, token_version, created_at,
-                    ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}
+                    ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}, ${balanceSelect}
              FROM users
              WHERE id = ? AND COALESCE(role, 'user') <> 'admin'
              LIMIT 1`,
@@ -126,7 +130,7 @@ const getUserByAdmin = async (req, res) => {
 // Admin updates specific user fields from user detail screen
 const updateUserByAdmin = async (req, res) => {
     const { id } = req.params;
-    const { phone, password, batprox_username, batprox_password, status, isPlayStore } = req.body || {};
+    const { phone, password, batprox_username, batprox_password, status, isPlayStore, balance } = req.body || {};
 
     if (!id) {
         return res.status(400).json({ message: 'User id required' });
@@ -194,9 +198,22 @@ const updateUserByAdmin = async (req, res) => {
             params.push(normalizedIsPlayStore);
         }
 
+        if (balance !== undefined) {
+            const hasColumn = await hasUsersColumn('balance');
+            if (!hasColumn) return res.status(400).json({ message: 'balance column missing. Run migration first.' });
+
+            const parsedBalance = Number(balance);
+            if (!Number.isFinite(parsedBalance) || parsedBalance < 0) {
+                return res.status(400).json({ message: 'Invalid balance value. Must be a non-negative number.' });
+            }
+
+            updates.push('balance = ?');
+            params.push(parsedBalance);
+        }
+
         if (updates.length === 0) {
             return res.status(400).json({
-                message: 'Nothing to update. Provide at least one of: phone, password, batprox_username, batprox_password, status, isPlayStore'
+                message: 'Nothing to update. Provide at least one of: phone, password, batprox_username, batprox_password, status, isPlayStore, balance'
             });
         }
 
@@ -207,7 +224,8 @@ const updateUserByAdmin = async (req, res) => {
             `SELECT id, name, phone, password, status,
                     ${await hasUsersColumn('batprox_username') ? 'batprox_username' : 'NULL AS batprox_username'},
                     ${await hasUsersColumn('batprox_password') ? 'batprox_password' : 'NULL AS batprox_password'},
-                    ${await hasUsersColumn('isPlayStore') ? 'isPlayStore' : 'NULL AS isPlayStore'}
+                    ${await hasUsersColumn('isPlayStore') ? 'isPlayStore' : 'NULL AS isPlayStore'},
+                    ${await hasUsersColumn('balance') ? 'balance' : '0.00 AS balance'}
              FROM users
              WHERE id = ?
              LIMIT 1`,
@@ -217,6 +235,61 @@ const updateUserByAdmin = async (req, res) => {
         return res.status(200).json({
             message: 'User updated successfully by admin',
             data: updatedRows[0]
+        });
+    } catch (err) {
+        return res.status(500).json({ message: 'Database error', error: err.message });
+    }
+};
+
+// User/Admin gets single user's balance by user id
+const getUserBalanceById = async (req, res) => {
+    const { id } = req.params;
+    const requesterId = req.user && req.user.id;
+
+    if (!id) {
+        return res.status(400).json({ message: 'User id required' });
+    }
+
+    if (!requesterId) {
+        return res.status(401).json({ message: 'Authentication problem — user not found in token.' });
+    }
+
+    try {
+        const hasBalance = await hasUsersColumn('balance');
+        if (!hasBalance) {
+            return res.status(400).json({ message: 'balance column missing. Run migration first.' });
+        }
+
+        const targetUserId = Number(id);
+        if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+            return res.status(400).json({ message: 'Invalid user id' });
+        }
+
+        const [requesterRows] = await db.query('SELECT role FROM users WHERE id = ? LIMIT 1', [requesterId]);
+        if (requesterRows.length === 0) {
+            return res.status(401).json({ message: 'Authentication problem — User not found.' });
+        }
+
+        const requesterRole = (requesterRows[0].role || '').toLowerCase();
+        if (Number(requesterId) !== targetUserId && requesterRole !== 'admin') {
+            return res.status(403).json({ message: 'You can only view your own balance.' });
+        }
+
+        const [rows] = await db.query(
+            `SELECT id, name, balance
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [targetUserId]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        return res.status(200).json({
+            message: 'success',
+            data: rows[0]
         });
     } catch (err) {
         return res.status(500).json({ message: 'Database error', error: err.message });
@@ -249,7 +322,10 @@ const loginUser = async (req, res) => {
         const passwordMatch = await bcrypt.compare(password, user.password);
 
         if (!passwordMatch) {
-            return res.status(401).json({ message: 'Invalid password' });
+            return res.status(401).json({
+                status: false,
+                message: 'The provided credentials are incorrect'
+             });
         }
 
         // increment token_version to invalidate previous tokens and create refresh token
@@ -260,22 +336,26 @@ const loginUser = async (req, res) => {
 
         await db.query('UPDATE users SET token_version = ?, refresh_token = ? WHERE id = ?', [newVersion, refreshTokenStr, user.id]);
 
-        const expiresIn = '1h';
+        const expiresIn = '240h';
               const token = jwt.sign({ id: user.id, phone: user.phone, token_version: newVersion, type: 'access' }, secretKey, { expiresIn });
 
-        const expiresInSeconds = 60 * 60; // 1 hour
+        const expiresInSeconds = 240 * 60 * 60; // 240 hours
         const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 
         const { password: _, refresh_token: __, ...userSafe } = user;
         userSafe.token_version = newVersion;
 
         res.json({
+            status: true,
             message: 'Login successful',
+            data:
+            {  tokens:{
             token,
             refreshToken: refreshTokenStr,
             expiresIn: expiresInSeconds,
             expiresAt,
-            user: userSafe
+            },
+            user: userSafe}
         });
     } catch (err) {
         res.status(500).json({ message: 'Database error', error: err.message });
@@ -612,5 +692,6 @@ module.exports = {
     createForgotPasswordRequest,
     getForgotPasswordRequests,
     updateUserByAdmin,
-    getUserByAdmin
+    getUserByAdmin,
+    getUserBalanceById
 };

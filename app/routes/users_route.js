@@ -19,7 +19,8 @@ const {
   createForgotPasswordRequest,
   getForgotPasswordRequests,
   updateUserByAdmin,
-  getUserByAdmin
+  getUserByAdmin,
+  getUserBalanceById
 } = require('../controllers/user_controller');
 
 // Public Routes
@@ -31,6 +32,7 @@ router.post('/logout', verifyToken, logoutUser);
 router.get('/admin/forgot_password_requests', verifyToken, verifyAdmin, getForgotPasswordRequests);
 router.get('/admin/user/:id', verifyToken, verifyAdmin, getUserByAdmin);
 router.put('/admin/user/:id', verifyToken, verifyAdmin, upload.none(), updateUserByAdmin);
+router.get('/balance/:id', verifyToken, getUserBalanceById);
 
 // Protected Routes
 router.get('/admin/all_users', verifyToken, verifyAdmin, getUser);
