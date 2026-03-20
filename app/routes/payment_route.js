@@ -10,7 +10,10 @@ const {
     getPaymentMethods,
     getAllPaymentMethodsAdmin,
     updatePaymentMethod,
-    deletePaymentMethod
+    deletePaymentMethod,
+    depositAmount,
+    getDepositRequests,
+    updateDepositStatus
 } = require('../controllers/payment_controller');
 
 // Public Routes
@@ -21,5 +24,8 @@ router.post('/admin/add', verifyToken, verifyAdmin, upload.none(), addPaymentMet
 router.get('/admin/all', verifyToken, verifyAdmin, getAllPaymentMethodsAdmin);
 router.put('/admin/:id', verifyToken, verifyAdmin, upload.none(), updatePaymentMethod);
 router.delete('/admin/:id', verifyToken, verifyAdmin, upload.none(), deletePaymentMethod);
+router.get('/admin/deposits', verifyToken, verifyAdmin, getDepositRequests);
+router.put('/admin/deposits/:id/status', verifyToken, verifyAdmin, updateDepositStatus);
+router.post('/user/deposit', verifyToken, upload.none(), depositAmount);
 
 module.exports = router;

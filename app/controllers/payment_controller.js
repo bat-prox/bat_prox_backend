@@ -171,10 +171,175 @@ const deletePaymentMethod = async (req, res) => {
     }
 };
 
+// Admin processes deposit
+const depositAmount = async (req, res) => {
+    const { toAccountNo, toBank, toAccountTitle, fromAccount, fromBank, fromAccountTitle, amount, transactionId } = req.body || {};
+
+    // Validation
+    if (!toAccountNo || !toBank || !toAccountTitle || !fromAccount || !fromBank || !fromAccountTitle || !amount || !transactionId) {
+        return res.status(400).json({ message: 'Missing required fields: toAccountNo, toBank, toAccountTitle, fromAccount, fromBank, fromAccountTitle, amount, transactionId' });
+    }
+
+    // Use authenticated user as recipient
+    const user_id = req.user.id;
+    if (!user_id) {
+        return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        return res.status(400).json({ message: 'Amount must be a positive number' });
+    }
+
+    try {
+        // Check if user exists
+        const [userRows] = await db.query('SELECT id FROM users WHERE id = ? LIMIT 1', [user_id]);
+        if (userRows.length === 0) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        // Skip payment method validation for user deposit proof-of-payment
+        // const [paymentRows] = await db.query('SELECT id FROM payment_methods WHERE account_no = ? AND bank_name = ? AND status = "active" LIMIT 1', [toAccountNo, toBank]);
+        // if (paymentRows.length === 0) {
+        //     return res.status(400).json({ message: 'Invalid destination account. Must match active payment method.' });
+        // }
+
+        // Create transactions table if not exists
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                transaction_id VARCHAR(255) UNIQUE NOT NULL,
+                from_account VARCHAR(255) NOT NULL,
+                from_bank VARCHAR(255) NOT NULL,
+                from_account_title VARCHAR(255) NOT NULL,
+                to_account_no VARCHAR(255) NOT NULL,
+                to_bank VARCHAR(255) NOT NULL,
+                to_account_title VARCHAR(255) NOT NULL,
+                status ENUM('pending', 'confirmed', 'failed') DEFAULT 'pending',
+                type ENUM('deposit', 'withdraw') DEFAULT 'deposit',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_user_id (user_id),
+                INDEX idx_transaction_id (transaction_id),
+                INDEX idx_status (status),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+
+        // Check if transactionId already exists
+        const [existingTx] = await db.query('SELECT id FROM transactions WHERE transaction_id = ? LIMIT 1', [transactionId]);
+        if (existingTx.length > 0) {
+            return res.status(409).json({ message: 'Transaction ID already exists' });
+        }
+
+        // Insert transaction
+        const [result] = await db.query(`
+            INSERT INTO transactions (
+                user_id, amount, transaction_id, from_account, from_bank, from_account_title,
+                to_account_no, to_bank, to_account_title, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        `, [user_id, parsedAmount, transactionId, fromAccount, fromBank, fromAccountTitle, toAccountNo, toBank, toAccountTitle]);
+
+        return res.status(201).json({
+            message: 'Deposit recorded successfully (pending confirmation)',
+            data: {
+                id: result.insertId,
+                transaction_id: transactionId,
+                amount: parsedAmount,
+                status: 'pending',
+                user_id
+            }
+        });
+    } catch (err) {
+        return res.status(500).json({ message: 'Database error', error: err.message });
+    }
+};
+const getDepositRequests = async (req, res) => {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    try {
+        // Total count
+        const [countResult] = await db.query("SELECT COUNT(*) as total FROM transactions WHERE type = 'deposit'");
+        const total = countResult[0].total;
+
+        // Paginated data
+        const [rows] = await db.query(
+            `SELECT * FROM transactions 
+             WHERE type = 'deposit' 
+             ORDER BY created_at DESC 
+             LIMIT ? OFFSET ?`, 
+            [limit, offset]
+        );
+
+        return res.status(200).json({
+            message: 'success',
+            total,
+            page,
+            limit,
+            data: rows
+        });
+    } catch (err) {
+        if (err.code === 'ER_NO_SUCH_TABLE') {
+            return res.status(500).json({
+                message: 'Transactions table missing. Create a deposit first or check DB.',
+                error: err.message
+            });
+        }
+        return res.status(500).json({ message: 'Database error', error: err.message });
+    }
+};
+
+ // Admin updates deposit status
+const updateDepositStatus = async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!id) {
+        return res.status(400).json({ message: 'Deposit ID required' });
+    }
+
+    const allowedMapped = {
+        'pending': 'pending',
+        'approved': 'confirmed',
+        'cancelled': 'failed',
+        'rejected': 'failed'
+    };
+
+    if (!allowedMapped[status]) {
+        return res.status(400).json({ message: 'Invalid status. Use: pending, approved, cancelled, rejected' });
+    }
+
+    const dbStatus = allowedMapped[status];
+
+    try {
+        const [existing] = await db.query('SELECT id FROM transactions WHERE id = ? AND type = \"deposit\" LIMIT 1', [id]);
+        if (existing.length === 0) {
+            return res.status(404).json({ message: 'Deposit not found' });
+        }
+
+        await db.query('UPDATE transactions SET status = ? WHERE id = ?', [dbStatus, id]);
+
+        const [updated] = await db.query('SELECT status, created_at FROM transactions WHERE id = ?', [id]);
+
+        return res.status(200).json({
+            message: `Deposit status updated to ${dbStatus}`,
+            data: updated[0]
+        });
+    } catch (err) {
+        return res.status(500).json({ message: 'Database error', error: err.message });
+    }
+};
+
 module.exports = {
     addPaymentMethod,
     getPaymentMethods,
     getAllPaymentMethodsAdmin,
     updatePaymentMethod,
-    deletePaymentMethod
+    deletePaymentMethod,
+    depositAmount,
+    getDepositRequests,
+    updateDepositStatus
 };
