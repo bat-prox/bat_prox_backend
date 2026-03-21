@@ -407,6 +407,120 @@ const getWithdrawRequests = async (req, res) => {
   }
 };
 
+// User gets own deposit/withdraw requests with optional status/type filter
+const getUserPaymentRequests = async (req, res) => {
+  const userId = req.user && req.user.id;
+  if (!userId) {
+    return sendError(res, 'User not authenticated', 401, 'UNAUTHORIZED');
+  }
+
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 10), 100);
+  const offset = (page - 1) * limit;
+
+  const rawStatus = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : '';
+  const rawType = typeof req.query.type === 'string' ? req.query.type.trim().toLowerCase() : '';
+
+  const statusMap = {
+    pending: 'pending',
+    approved: 'confirmed',
+    confirmed: 'confirmed',
+    cancelled: 'failed',
+    rejected: 'failed',
+    failed: 'failed'
+  };
+
+  if (rawStatus && !statusMap[rawStatus]) {
+    return sendError(res, 'Invalid status. Use: pending, approved, confirmed, cancelled, rejected, failed', 400, 'BAD_REQUEST');
+  }
+
+  if (rawType && rawType !== 'deposit' && rawType !== 'withdraw') {
+    return sendError(res, 'Invalid type. Use: deposit or withdraw', 400, 'BAD_REQUEST');
+  }
+
+  const dbStatus = rawStatus ? statusMap[rawStatus] : null;
+
+  try {
+    const whereParts = ['t.user_id = ?'];
+    const whereParams = [userId];
+
+    if (rawType) {
+      whereParts.push('t.type = ?');
+      whereParams.push(rawType);
+    }
+
+    if (dbStatus) {
+      whereParts.push('t.status = ?');
+      whereParams.push(dbStatus);
+    }
+
+    const whereClause = whereParts.join(' AND ');
+
+    const [countRows] = await db.query(
+      `SELECT COUNT(*) AS total
+       FROM transactions t
+       WHERE ${whereClause}`,
+      whereParams
+    );
+
+    const total = Number(countRows[0].total || 0);
+
+    const [rows] = await db.query(
+      `SELECT
+          t.id,
+          t.user_id,
+          t.type,
+          t.amount,
+          t.transaction_id,
+          t.from_account,
+          t.from_bank,
+          t.from_account_title,
+          t.to_account_no,
+          t.to_bank,
+          t.to_account_title,
+          t.status,
+          t.created_at
+       FROM transactions t
+       WHERE ${whereClause}
+       ORDER BY t.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...whereParams, limit, offset]
+    );
+
+    return sendSuccess(
+      res,
+      'User payment requests fetched successfully',
+      {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        filters: {
+          status: rawStatus || null,
+          type: rawType || null
+        },
+        items: rows
+      },
+      200
+    );
+  } catch (err) {
+    if (err && err.code === 'ER_NO_SUCH_TABLE') {
+      return sendSuccess(res, 'User payment requests fetched successfully', {
+        page,
+        limit,
+        total: 0,
+        totalPages: 0,
+        filters: {
+          status: rawStatus || null,
+          type: rawType || null
+        },
+        items: []
+      }, 200);
+    }
+    return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
+  }
+};
+
 module.exports = {
   addPaymentMethod,
   getPaymentMethods,
@@ -418,5 +532,6 @@ module.exports = {
   getDepositRequests,
   updateDepositStatus,
   updateWithdrawStatus,
-  getWithdrawRequests
+  getWithdrawRequests,
+  getUserPaymentRequests
 };

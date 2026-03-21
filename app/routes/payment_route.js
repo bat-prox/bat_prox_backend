@@ -16,7 +16,8 @@ const {
     updateDepositStatus,
     updateWithdrawStatus,
     withdrawAmount,
-    getWithdrawRequests
+    getWithdrawRequests,
+    getUserPaymentRequests
 } = require('../controllers/payment_controller');
 
 // Public Routes
@@ -33,5 +34,6 @@ router.get('/admin/withdraws', verifyToken, verifyAdmin, getWithdrawRequests);
 router.put('/admin/withdraws/:id/status', verifyToken, verifyAdmin, updateWithdrawStatus);
 router.post('/user/withdraw', verifyToken, upload.none(), withdrawAmount);
 router.post('/user/deposit', verifyToken, upload.none(), depositAmount);
+router.get('/user/requests', verifyToken, getUserPaymentRequests);
 
 module.exports = router;

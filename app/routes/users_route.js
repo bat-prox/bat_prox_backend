@@ -7,6 +7,7 @@ const verifyAdmin = require('../middleware/admin_middleware');
 
 const {
   getUser,
+  getAllUsersByAdmin,
   registerUser,
   loginUser,
   refreshToken,
@@ -36,6 +37,7 @@ router.get('/balance/:id', verifyToken, getUserBalanceById);
 
 // Protected Routes
 router.get('/admin/all_users', verifyToken, verifyAdmin, getUser);
+router.get('/admin/all_users/get_all', verifyToken, verifyAdmin, getAllUsersByAdmin);
 router.put('/update_user/:id', verifyToken, uploadMedia.single('image'), updateUser);
 router.delete('/delete_user/:id', verifyToken, upload.none(), deleteUser);
 router.post(

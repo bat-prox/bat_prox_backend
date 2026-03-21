@@ -55,8 +55,11 @@ const sanitizeUser = (user = {}) => {
 
 const getUser = async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 1000);
-    const offset = parseInt(req.query.offset, 10) || 0;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 20), 1000);
+    const offset = req.query.offset !== undefined
+      ? Math.max(0, parseInt(req.query.offset, 10) || 0)
+      : (page - 1) * limit;
 
     const hasBatproxUsername = await hasUsersColumn('batprox_username');
     const hasBatproxPassword = await hasUsersColumn('batprox_password');
@@ -68,6 +71,13 @@ const getUser = async (req, res) => {
     const isPlayStoreSelect = hasIsPlayStore ? 'isPlayStore' : 'NULL AS isPlayStore';
     const balanceSelect = hasBalance ? 'balance' : '0.00 AS balance';
 
+    const [countRows] = await db.query(
+      `SELECT COUNT(*) AS total
+       FROM users
+       WHERE COALESCE(role, 'user') <> 'admin'`
+    );
+    const total = Number(countRows[0].total || 0);
+
     const [result] = await db.query(
       `SELECT id, name, created_at, status, phone,
               ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}, ${balanceSelect}
@@ -77,7 +87,48 @@ const getUser = async (req, res) => {
       [limit, offset]
     );
 
-    return sendSuccess(res, 'Users fetched successfully', { items: result }, 200);
+    return sendSuccess(
+      res,
+      'Users fetched successfully',
+      {
+        page,
+        limit,
+        offset,
+        total,
+        totalPages: Math.ceil(total / limit),
+        items: result
+      },
+      200
+    );
+  } catch (err) {
+    return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
+  }
+};
+
+const getAllUsersByAdmin = async (req, res) => {
+  try {
+    const hasBatproxUsername = await hasUsersColumn('batprox_username');
+    const hasBatproxPassword = await hasUsersColumn('batprox_password');
+    const hasIsPlayStore = await hasUsersColumn('isPlayStore');
+    const hasBalance = await hasUsersColumn('balance');
+
+    const batproxUsernameSelect = hasBatproxUsername ? 'batprox_username' : 'NULL AS batprox_username';
+    const batproxPasswordSelect = hasBatproxPassword ? 'batprox_password' : 'NULL AS batprox_password';
+    const isPlayStoreSelect = hasIsPlayStore ? 'isPlayStore' : 'NULL AS isPlayStore';
+    const balanceSelect = hasBalance ? 'balance' : '0.00 AS balance';
+
+    const [rows] = await db.query(
+      `SELECT id, name, created_at, status, phone,
+              ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}, ${balanceSelect}
+       FROM users
+       WHERE COALESCE(role, 'user') <> 'admin'
+       ORDER BY created_at DESC`
+    );
+
+    return sendSuccess(res, 'All users fetched successfully', {
+      total: rows.length,
+      items: rows
+    }, 200);
   } catch (err) {
     return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
   }
@@ -615,6 +666,7 @@ const getForgotPasswordRequests = async (req, res) => {
 
 module.exports = {
   getUser,
+  getAllUsersByAdmin,
   registerUser,
   loginUser,
   refreshToken,
