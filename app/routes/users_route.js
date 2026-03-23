@@ -21,7 +21,8 @@ const {
   getForgotPasswordRequests,
   updateUserByAdmin,
   getUserByAdmin,
-  getUserBalanceById
+  getUserBalanceById,
+  getUserProfile
 } = require('../controllers/user_controller');
 
 // Public Routes
@@ -47,5 +48,6 @@ router.post(
   createUserWithMedia
 );
 router.post('/upload_user', verifyToken, uploadMedia.single('image'), createUserWithImage);
+router.get('/profile', verifyToken, getUserProfile);
 
 module.exports = router;

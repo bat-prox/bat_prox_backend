@@ -334,6 +334,71 @@ const getUserBalanceById = async (req, res) => {
   }
 };
 
+const getUserProfile = async (req, res) => {
+  const userId = req.user && req.user.id;
+
+  if (!userId) {
+    return sendError(res, 'Authentication problem — user not found in token.', 401, 'UNAUTHORIZED');
+  }
+
+  try {
+    const hasBatproxUsername = await hasUsersColumn('batprox_username');
+    const hasBatproxPassword = await hasUsersColumn('batprox_password');
+    const hasIsPlayStore = await hasUsersColumn('isPlayStore');
+    const hasBalance = await hasUsersColumn('balance');
+
+    const batproxUsernameSelect = hasBatproxUsername ? 'batprox_username' : 'NULL AS batprox_username';
+    const batproxPasswordSelect = hasBatproxPassword ? 'batprox_password' : 'NULL AS batprox_password';
+    const isPlayStoreSelect = hasIsPlayStore ? 'isPlayStore' : '0 AS isPlayStore';
+    const balanceSelect = hasBalance ? 'balance' : '0.00 AS balance';
+
+    const [userRows] = await db.query(
+      `SELECT id, name, phone, status, created_at,
+              ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}, ${balanceSelect}
+       FROM users
+       WHERE id = ? AND COALESCE(role, 'user') <> 'admin'
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (userRows.length === 0) {
+      return sendError(res, 'User not found', 404, 'NOT_FOUND');
+    }
+
+    const user = userRows[0];
+
+    // Get total deposit amount (sum of all confirmed deposits)
+    const [depositRows] = await db.query(
+      `SELECT COALESCE(SUM(amount), 0) as total_deposit
+       FROM transactions
+       WHERE user_id = ? AND type = 'deposit' AND status = 'confirmed'`,
+      [userId]
+    );
+
+    const deposit = depositRows[0]?.total_deposit || 0;
+
+    // Get pending withdrawal amount (sum of all pending withdrawals)
+    const [pendingRows] = await db.query(
+      `SELECT COALESCE(SUM(amount), 0) as total_pending
+       FROM transactions
+       WHERE user_id = ? AND type = 'withdraw' AND status = 'pending'`,
+      [userId]
+    );
+
+    const pending = pendingRows[0]?.total_pending || 0;
+
+    const profileData = {
+      ...user,
+      deposit: deposit.toString(),
+      pending: pending.toString()
+    };
+
+    return sendSuccess(res, 'User fetched successfully', profileData, 200);
+  } catch (err) {
+    return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
+  }
+};
+
 const loginUser = async (req, res) => {
   const { phone, password } = req.body || {};
 
@@ -680,5 +745,6 @@ module.exports = {
   getForgotPasswordRequests,
   updateUserByAdmin,
   getUserByAdmin,
-  getUserBalanceById
+  getUserBalanceById,
+  getUserProfile
 };
