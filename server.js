@@ -60,7 +60,7 @@ app.use((req, res, next) => {
 
 app.use('/user',users_routes);
 app.use('/uploads', express.static('uploads'),users_routes);
-app.use('/tasks', tasks_routes);
+app.use('/user', tasks_routes);
 app.use('/payment', payment_routes);
 
 

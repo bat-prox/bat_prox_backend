@@ -6,11 +6,11 @@ const { getTasks, createTask, updateTask, deleteTask, updateTaskStatus, getTaskS
 router.get('/summary', verifyToken, getTaskSummary);
 
 
-router.get('/', verifyToken, getTasks);
-router.post('/', verifyToken, createTask);
-router.put('/:id', verifyToken, updateTask);
-router.delete('/:id', verifyToken, deleteTask);
+router.get('/tasks', verifyToken, getTasks);
+router.post('/tasks/create', verifyToken, createTask);
+router.put('/tasks/:id', verifyToken, updateTask);
+router.delete('/tasks/:id', verifyToken, deleteTask);
 // PATCH endpoint for status update with action
-router.patch('/:id/status/:action', verifyToken, updateTaskStatus);
+router.patch('/tasks/:id/status/:action', verifyToken, updateTaskStatus);
 
 module.exports = router;
