@@ -318,9 +318,10 @@ const getDepositRequests = async (req, res) => {
     );
 
     const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const uploadsPublicPath = process.env.UPLOADS_PUBLIC_PATH || '/api/uploads';
     const items = rows.map(row => ({
       ...row,
-      recipt: row.recipt ? `${baseUrl}/uploads/${row.recipt}` : null
+      recipt: row.recipt ? `${baseUrl}${uploadsPublicPath}/${row.recipt}` : null
     }));
 
     return sendSuccess(res, 'Deposit requests fetched successfully', { total, page, limit, items }, 200);

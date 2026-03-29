@@ -68,6 +68,7 @@ app.use((req, res, next) => {
 
 app.use('/user',users_routes);
 app.use('/uploads', express.static(uploadsDir),users_routes);
+app.use('/api/uploads', express.static(uploadsDir),users_routes);
 app.use('/user', tasks_routes);
 app.use('/payment', payment_routes);
 app.use('/api/dashboard', dashboard_routes);
