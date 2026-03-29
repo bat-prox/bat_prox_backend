@@ -1,11 +1,17 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
 const multer = require('multer');
+const fs = require('fs');
 const path = require('path');
+
+const uploadsDir = path.resolve(__dirname, '../../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 const receiptStorage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/');
+    cb(null, uploadsDir);
   },
   filename: function (req, file, cb) {
     const uniqueName = Date.now() + path.extname(file.originalname);

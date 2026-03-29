@@ -2,8 +2,15 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+const uploadsDir = path.resolve(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 const users_routes=require('./app/routes/users_route');
 const tasks_routes=require('./app/routes/tasks_route');
@@ -60,7 +67,7 @@ app.use((req, res, next) => {
 
 
 app.use('/user',users_routes);
-app.use('/uploads', express.static('uploads'),users_routes);
+app.use('/uploads', express.static(uploadsDir),users_routes);
 app.use('/user', tasks_routes);
 app.use('/payment', payment_routes);
 app.use('/api/dashboard', dashboard_routes);
