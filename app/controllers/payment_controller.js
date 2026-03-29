@@ -26,6 +26,11 @@ const uploadReceipt = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB
 });
 
+const hasUsersColumn = async (columnName) => {
+  const [rows] = await db.query('SHOW COLUMNS FROM users LIKE ?', [columnName]);
+  return rows.length > 0;
+};
+
 // Admin adds a new payment method
 const addPaymentMethod = async (req, res) => {
   const { title, account_no, bank_name, bank_icon } = req.body || {};
@@ -445,18 +450,57 @@ const getWithdrawRequests = async (req, res) => {
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 10;
   const offset = (page - 1) * limit;
+  const { status, name } = req.query;
+
+  const conditions = ["t.type = 'withdraw'"];
+  const filterParams = [];
+
+  if (status !== undefined && status !== '') {
+    conditions.push('t.status = ?');
+    filterParams.push(status);
+  }
+
+  if (name !== undefined && name.trim() !== '') {
+    conditions.push('u.name LIKE ?');
+    filterParams.push(`%${name.trim()}%`);
+  }
+
+  const whereClause = conditions.join(' AND ');
 
   try {
-    const [countResult] = await db.query("SELECT COUNT(*) as total FROM transactions WHERE type = 'withdraw'");
+    const hasBatproxUsername = await hasUsersColumn('batprox_username');
+    const hasBatproxPassword = await hasUsersColumn('batprox_password');
+
+    const batproxUsernameSelect = hasBatproxUsername ? 'u.batprox_username AS batprox_username' : 'NULL AS batprox_username';
+    const batproxPasswordSelect = hasBatproxPassword ? 'u.batprox_password AS batprox_password' : 'NULL AS batprox_password';
+
+    const [countResult] = await db.query(
+      `SELECT COUNT(*) as total
+       FROM transactions t
+       LEFT JOIN users u ON t.user_id = u.id
+       WHERE ${whereClause}`,
+      filterParams
+    );
     const total = countResult[0].total;
 
     const [rows] = await db.query(
-      `SELECT t.*, u.name as user_name FROM transactions t
-       JOIN users u ON t.user_id = u.id
-       WHERE t.type = 'withdraw'
+      `SELECT t.id, t.user_id, t.amount, t.transaction_id,
+              COALESCE(t.from_account, '') AS from_account,
+              COALESCE(t.from_bank, '') AS from_bank,
+              COALESCE(t.from_account_title, '') AS from_account_title,
+              COALESCE(t.to_account_no, '') AS to_account_no,
+              COALESCE(t.to_bank, '') AS to_bank,
+              COALESCE(t.to_account_title, '') AS to_account_title,
+              COALESCE(t.recipt, '') AS recipt,
+              t.status, t.type, t.created_at,
+              u.name AS user_name, u.name AS name, u.status AS user_status, u.phone AS phone,
+              ${batproxUsernameSelect}, ${batproxPasswordSelect}
+       FROM transactions t
+       LEFT JOIN users u ON t.user_id = u.id
+       WHERE ${whereClause}
        ORDER BY t.created_at DESC
        LIMIT ? OFFSET ?`,
-      [limit, offset]
+      [...filterParams, limit, offset]
     );
 
     return sendSuccess(res, 'Withdraw requests fetched successfully', { total, page, limit, items: rows }, 200);
