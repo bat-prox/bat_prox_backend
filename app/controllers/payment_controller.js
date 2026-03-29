@@ -31,6 +31,11 @@ const hasUsersColumn = async (columnName) => {
   return rows.length > 0;
 };
 
+const hasTableColumn = async (tableName, columnName) => {
+  const [rows] = await db.query(`SHOW COLUMNS FROM \`${tableName}\` LIKE ?`, [columnName]);
+  return rows.length > 0;
+};
+
 // Admin adds a new payment method
 const addPaymentMethod = async (req, res) => {
   const { title, account_no, bank_name, bank_icon } = req.body || {};
@@ -470,9 +475,33 @@ const getWithdrawRequests = async (req, res) => {
   try {
     const hasBatproxUsername = await hasUsersColumn('batprox_username');
     const hasBatproxPassword = await hasUsersColumn('batprox_password');
+    const [
+      hasFromAccount,
+      hasFromBank,
+      hasFromAccountTitle,
+      hasToAccountNo,
+      hasToBank,
+      hasToAccountTitle,
+      hasRecipt
+    ] = await Promise.all([
+      hasTableColumn('transactions', 'from_account'),
+      hasTableColumn('transactions', 'from_bank'),
+      hasTableColumn('transactions', 'from_account_title'),
+      hasTableColumn('transactions', 'to_account_no'),
+      hasTableColumn('transactions', 'to_bank'),
+      hasTableColumn('transactions', 'to_account_title'),
+      hasTableColumn('transactions', 'recipt')
+    ]);
 
     const batproxUsernameSelect = hasBatproxUsername ? 'u.batprox_username AS batprox_username' : 'NULL AS batprox_username';
     const batproxPasswordSelect = hasBatproxPassword ? 'u.batprox_password AS batprox_password' : 'NULL AS batprox_password';
+    const fromAccountSelect = hasFromAccount ? "COALESCE(t.from_account, '') AS from_account" : "'' AS from_account";
+    const fromBankSelect = hasFromBank ? "COALESCE(t.from_bank, '') AS from_bank" : "'' AS from_bank";
+    const fromAccountTitleSelect = hasFromAccountTitle ? "COALESCE(t.from_account_title, '') AS from_account_title" : "'' AS from_account_title";
+    const toAccountNoSelect = hasToAccountNo ? "COALESCE(t.to_account_no, '') AS to_account_no" : "'' AS to_account_no";
+    const toBankSelect = hasToBank ? "COALESCE(t.to_bank, '') AS to_bank" : "'' AS to_bank";
+    const toAccountTitleSelect = hasToAccountTitle ? "COALESCE(t.to_account_title, '') AS to_account_title" : "'' AS to_account_title";
+    const reciptSelect = hasRecipt ? "COALESCE(t.recipt, '') AS recipt" : "'' AS recipt";
 
     const [countResult] = await db.query(
       `SELECT COUNT(*) as total
@@ -485,13 +514,13 @@ const getWithdrawRequests = async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT t.id, t.user_id, t.amount, t.transaction_id,
-              COALESCE(t.from_account, '') AS from_account,
-              COALESCE(t.from_bank, '') AS from_bank,
-              COALESCE(t.from_account_title, '') AS from_account_title,
-              COALESCE(t.to_account_no, '') AS to_account_no,
-              COALESCE(t.to_bank, '') AS to_bank,
-              COALESCE(t.to_account_title, '') AS to_account_title,
-              COALESCE(t.recipt, '') AS recipt,
+              ${fromAccountSelect},
+              ${fromBankSelect},
+              ${fromAccountTitleSelect},
+              ${toAccountNoSelect},
+              ${toBankSelect},
+              ${toAccountTitleSelect},
+              ${reciptSelect},
               t.status, t.type, t.created_at,
               u.name AS user_name, u.name AS name, u.status AS user_status, u.phone AS phone,
               ${batproxUsernameSelect}, ${batproxPasswordSelect}
