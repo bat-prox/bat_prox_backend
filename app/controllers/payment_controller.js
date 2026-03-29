@@ -1,5 +1,30 @@
 const db = require('../config/db');
 const { sendSuccess, sendError } = require('../utils/response');
+const multer = require('multer');
+const path = require('path');
+
+const receiptStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/');
+  },
+  filename: function (req, file, cb) {
+    const uniqueName = Date.now() + path.extname(file.originalname);
+    cb(null, uniqueName);
+  }
+});
+
+const uploadReceipt = multer({
+  storage: receiptStorage,
+  fileFilter: function (req, file, cb) {
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image (jpg, png, gif, webp) or PDF files are allowed!'), false);
+    }
+  },
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
 
 // Admin adds a new payment method
 const addPaymentMethod = async (req, res) => {
@@ -151,6 +176,7 @@ const deletePaymentMethod = async (req, res) => {
 // User creates deposit request
 const depositAmount = async (req, res) => {
   const { toAccountNo, toBank, toAccountTitle, fromAccount, fromBank, fromAccountTitle, amount, transactionId } = req.body || {};
+  const recipt = req.file ? req.file.filename : null;
 
   if (!toAccountNo || !toBank || !toAccountTitle || !fromAccount || !fromBank || !fromAccountTitle || !amount || !transactionId) {
     return sendError(
@@ -189,6 +215,7 @@ const depositAmount = async (req, res) => {
           to_account_no VARCHAR(255) NOT NULL,
           to_bank VARCHAR(255) NOT NULL,
           to_account_title VARCHAR(255) NOT NULL,
+          recipt VARCHAR(255) NULL,
           status ENUM('pending', 'confirmed', 'failed') DEFAULT 'pending',
           type ENUM('deposit', 'withdraw') DEFAULT 'deposit',
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -199,6 +226,9 @@ const depositAmount = async (req, res) => {
       )
     `);
 
+    // Add recipt column to existing tables that don't have it yet
+    await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS recipt VARCHAR(255) NULL`);
+
     const [existingTx] = await db.query('SELECT id FROM transactions WHERE transaction_id = ? LIMIT 1', [transactionId]);
     if (existingTx.length > 0) {
       return sendError(res, 'Transaction ID already exists', 400, 'BAD_REQUEST');
@@ -207,9 +237,9 @@ const depositAmount = async (req, res) => {
     const [result] = await db.query(
       `INSERT INTO transactions (
           user_id, amount, transaction_id, from_account, from_bank, from_account_title,
-          to_account_no, to_bank, to_account_title, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [user_id, parsedAmount, transactionId, fromAccount, fromBank, fromAccountTitle, toAccountNo, toBank, toAccountTitle]
+          to_account_no, to_bank, to_account_title, recipt, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [user_id, parsedAmount, transactionId, fromAccount, fromBank, fromAccountTitle, toAccountNo, toBank, toAccountTitle, recipt]
     );
 
     return sendSuccess(
@@ -220,6 +250,7 @@ const depositAmount = async (req, res) => {
         transaction_id: transactionId,
         amount: parsedAmount,
         status: 'pending',
+        recipt: recipt || null,
         user_id
       },
       201
@@ -233,20 +264,50 @@ const getDepositRequests = async (req, res) => {
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 10;
   const offset = (page - 1) * limit;
+  const { status, name } = req.query;
+
+  const conditions = ["t.type = 'deposit'"];
+  const filterParams = [];
+
+  if (status !== undefined && status !== '') {
+    conditions.push('t.status = ?');
+    filterParams.push(status);
+  }
+
+  if (name !== undefined && name.trim() !== '') {
+    conditions.push('u.name LIKE ?');
+    filterParams.push(`%${name.trim()}%`);
+  }
+
+  const whereClause = conditions.join(' AND ');
 
   try {
-    const [countResult] = await db.query("SELECT COUNT(*) as total FROM transactions WHERE type = 'deposit'");
+    const [countResult] = await db.query(
+      `SELECT COUNT(*) as total
+       FROM transactions t
+       LEFT JOIN users u ON u.id = t.user_id
+       WHERE ${whereClause}`,
+      filterParams
+    );
     const total = countResult[0].total;
 
     const [rows] = await db.query(
-      `SELECT * FROM transactions
-       WHERE type = 'deposit'
-       ORDER BY created_at DESC
+      `SELECT t.*, u.name AS user_name, u.phone AS user_phone
+       FROM transactions t
+       LEFT JOIN users u ON u.id = t.user_id
+       WHERE ${whereClause}
+       ORDER BY t.created_at DESC
        LIMIT ? OFFSET ?`,
-      [limit, offset]
+      [...filterParams, limit, offset]
     );
 
-    return sendSuccess(res, 'Deposit requests fetched successfully', { total, page, limit, items: rows }, 200);
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const items = rows.map(row => ({
+      ...row,
+      recipt: row.recipt ? `${baseUrl}/uploads/${row.recipt}` : null
+    }));
+
+    return sendSuccess(res, 'Deposit requests fetched successfully', { total, page, limit, items }, 200);
   } catch (err) {
     if (err && err.code === 'ER_NO_SUCH_TABLE') {
       return sendError(res, 'Transactions table missing. Create a deposit first or check DB.', 500, 'INTERNAL_SERVER_ERROR');
@@ -528,6 +589,7 @@ module.exports = {
   updatePaymentMethod,
   deletePaymentMethod,
   depositAmount,
+  uploadReceipt,
   withdrawAmount,
   getDepositRequests,
   updateDepositStatus,

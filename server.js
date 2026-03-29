@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 5000;
 const users_routes=require('./app/routes/users_route');
 const tasks_routes=require('./app/routes/tasks_route');
 const payment_routes=require('./app/routes/payment_route');
+const dashboard_routes=require('./app/routes/dashboard.route');
 
 const defaultAllowedOrigins = [
   'https://batprox.com',
@@ -62,6 +63,7 @@ app.use('/user',users_routes);
 app.use('/uploads', express.static('uploads'),users_routes);
 app.use('/user', tasks_routes);
 app.use('/payment', payment_routes);
+app.use('/api/dashboard', dashboard_routes);
 
 
 // Start server

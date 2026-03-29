@@ -61,6 +61,8 @@ const getUser = async (req, res) => {
       ? Math.max(0, parseInt(req.query.offset, 10) || 0)
       : (page - 1) * limit;
 
+    const { status, name } = req.query;
+
     const hasBatproxUsername = await hasUsersColumn('batprox_username');
     const hasBatproxPassword = await hasUsersColumn('batprox_password');
     const hasIsPlayStore = await hasUsersColumn('isPlayStore');
@@ -71,10 +73,24 @@ const getUser = async (req, res) => {
     const isPlayStoreSelect = hasIsPlayStore ? 'isPlayStore' : 'NULL AS isPlayStore';
     const balanceSelect = hasBalance ? 'balance' : '0.00 AS balance';
 
+    const conditions = [`COALESCE(role, 'user') <> 'admin'`];
+    const filterParams = [];
+
+    if (status !== undefined && status !== '') {
+      conditions.push('status = ?');
+      filterParams.push(status);
+    }
+
+    if (name !== undefined && name.trim() !== '') {
+      conditions.push('name LIKE ?');
+      filterParams.push(`%${name.trim()}%`);
+    }
+
+    const whereClause = conditions.join(' AND ');
+
     const [countRows] = await db.query(
-      `SELECT COUNT(*) AS total
-       FROM users
-       WHERE COALESCE(role, 'user') <> 'admin'`
+      `SELECT COUNT(*) AS total FROM users WHERE ${whereClause}`,
+      filterParams
     );
     const total = Number(countRows[0].total || 0);
 
@@ -82,9 +98,9 @@ const getUser = async (req, res) => {
       `SELECT id, name, created_at, status, phone,
               ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}, ${balanceSelect}
        FROM users
-       WHERE COALESCE(role, 'user') <> 'admin'
+       WHERE ${whereClause}
        LIMIT ? OFFSET ?`,
-      [limit, offset]
+      [...filterParams, limit, offset]
     );
 
     return sendSuccess(
