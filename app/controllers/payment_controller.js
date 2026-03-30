@@ -354,6 +354,11 @@ const withdrawAmount = async (req, res) => {
   const transactionId = `W${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
   try {
+    const hasBalance = await hasUsersColumn('balance');
+    if (!hasBalance) {
+      return sendError(res, 'balance column missing. Run migration first.', 400, 'BAD_REQUEST');
+    }
+
     const [
       hasFromAccount,
       hasFromBank,
@@ -374,50 +379,81 @@ const withdrawAmount = async (req, res) => {
       return sendError(res, 'Transactions table columns missing. Please run migration script first.', 500, 'INTERNAL_SERVER_ERROR');
     }
 
-    const [existingTx] = await db.query('SELECT id FROM transactions WHERE transaction_id = ? LIMIT 1', [transactionId]);
-    if (existingTx.length > 0) {
-      return sendError(res, 'Transaction ID already exists', 400, 'BAD_REQUEST');
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [userRows] = await connection.query('SELECT id, balance FROM users WHERE id = ? LIMIT 1 FOR UPDATE', [user_id]);
+      if (userRows.length === 0) {
+        await connection.rollback();
+        return sendError(res, 'User not found', 404, 'NOT_FOUND');
+      }
+
+      const currentBalance = Number(userRows[0].balance || 0);
+      if (parsedAmount > currentBalance) {
+        await connection.rollback();
+        return sendError(res, 'Insufficient balance', 400, 'BAD_REQUEST');
+      }
+
+      const [existingTx] = await connection.query('SELECT id FROM transactions WHERE transaction_id = ? LIMIT 1', [transactionId]);
+      if (existingTx.length > 0) {
+        await connection.rollback();
+        return sendError(res, 'Transaction ID already exists', 400, 'BAD_REQUEST');
+      }
+
+      const insertColumns = ['user_id', 'amount', 'transaction_id'];
+      const insertValues = [user_id, parsedAmount, transactionId];
+
+      if (hasFromAccount) {
+        insertColumns.push('from_account');
+        insertValues.push('');
+      }
+
+      if (hasFromBank) {
+        insertColumns.push('from_bank');
+        insertValues.push('');
+      }
+
+      if (hasFromAccountTitle) {
+        insertColumns.push('from_account_title');
+        insertValues.push('');
+      }
+
+      insertColumns.push('to_account_no', 'to_bank', 'to_account_title', 'status', 'type');
+      insertValues.push(account_number, bank_name, account_title, 'pending', 'withdraw');
+
+      const placeholders = insertColumns.map(() => '?').join(', ');
+
+      const [result] = await connection.query(
+        `INSERT INTO transactions (${insertColumns.join(', ')}) VALUES (${placeholders})`,
+        insertValues
+      );
+
+      await connection.query('UPDATE users SET balance = balance - ? WHERE id = ?', [parsedAmount, user_id]);
+
+      const [balanceRows] = await connection.query('SELECT balance FROM users WHERE id = ? LIMIT 1', [user_id]);
+      const updatedBalance = balanceRows.length > 0 ? Number(balanceRows[0].balance || 0) : currentBalance - parsedAmount;
+
+      await connection.commit();
+
+      return sendSuccess(
+        res,
+        'Withdraw request created (pending approval)',
+        {
+          id: result.insertId,
+          transaction_id: transactionId,
+          amount: parsedAmount,
+          status: 'pending',
+          balance: updatedBalance
+        },
+        201
+      );
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
     }
-
-    const insertColumns = ['user_id', 'amount', 'transaction_id'];
-    const insertValues = [user_id, parsedAmount, transactionId];
-
-    if (hasFromAccount) {
-      insertColumns.push('from_account');
-      insertValues.push('');
-    }
-
-    if (hasFromBank) {
-      insertColumns.push('from_bank');
-      insertValues.push('');
-    }
-
-    if (hasFromAccountTitle) {
-      insertColumns.push('from_account_title');
-      insertValues.push('');
-    }
-
-    insertColumns.push('to_account_no', 'to_bank', 'to_account_title', 'status', 'type');
-    insertValues.push(account_number, bank_name, account_title, 'pending', 'withdraw');
-
-    const placeholders = insertColumns.map(() => '?').join(', ');
-
-    const [result] = await db.query(
-      `INSERT INTO transactions (${insertColumns.join(', ')}) VALUES (${placeholders})`,
-      insertValues
-    );
-
-    return sendSuccess(
-      res,
-      'Withdraw request created (pending approval)',
-      {
-        id: result.insertId,
-        transaction_id: transactionId,
-        amount: parsedAmount,
-        status: 'pending'
-      },
-      201
-    );
   } catch (err) {
     if (err && err.code === 'ER_NO_SUCH_TABLE') {
       return sendError(res, 'Transactions table missing. Please run migration script first.', 500, 'INTERNAL_SERVER_ERROR');
@@ -492,16 +528,51 @@ const updateWithdrawStatus = async (req, res) => {
   const dbStatus = allowedMapped[status];
 
   try {
-    const [existing] = await db.query('SELECT id FROM transactions WHERE id = ? AND type = "withdraw" LIMIT 1', [id]);
-    if (existing.length === 0) {
-      return sendError(res, 'Withdraw not found', 404, 'NOT_FOUND');
+    const hasBalance = await hasUsersColumn('balance');
+    if (!hasBalance) {
+      return sendError(res, 'balance column missing. Run migration first.', 400, 'BAD_REQUEST');
     }
 
-    await db.query('UPDATE transactions SET status = ? WHERE id = ?', [dbStatus, id]);
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
 
-    const [updated] = await db.query('SELECT status, created_at FROM transactions WHERE id = ?', [id]);
+      const [existing] = await connection.query(
+        'SELECT id, user_id, amount, status FROM transactions WHERE id = ? AND type = "withdraw" LIMIT 1 FOR UPDATE',
+        [id]
+      );
+      if (existing.length === 0) {
+        await connection.rollback();
+        return sendError(res, 'Withdraw not found', 404, 'NOT_FOUND');
+      }
 
-    return sendSuccess(res, `Withdraw status updated to ${dbStatus}`, updated[0], 200);
+      const withdraw = existing[0];
+      const previousStatus = withdraw.status;
+
+      if (previousStatus === dbStatus) {
+        await connection.rollback();
+        return sendSuccess(res, `Withdraw status already ${dbStatus}`, { status: dbStatus }, 200);
+      }
+
+      let refunded = false;
+      if (previousStatus === 'pending' && dbStatus === 'failed') {
+        await connection.query('UPDATE users SET balance = balance + ? WHERE id = ?', [withdraw.amount, withdraw.user_id]);
+        refunded = true;
+      }
+
+      await connection.query('UPDATE transactions SET status = ? WHERE id = ?', [dbStatus, id]);
+
+      const [updated] = await connection.query('SELECT status, created_at FROM transactions WHERE id = ?', [id]);
+
+      await connection.commit();
+
+      return sendSuccess(res, `Withdraw status updated to ${dbStatus}`, { ...updated[0], refunded }, 200);
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
   } catch (err) {
     return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
   }
