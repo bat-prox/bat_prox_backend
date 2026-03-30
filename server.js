@@ -50,6 +50,10 @@ const isAllowedOrigin = (origin) => {
 
   try {
     const { hostname } = new URL(normalizedOrigin);
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return true;
+    }
+
     return hostname === 'batprox.com' || hostname.endsWith('.batprox.com');
   } catch (err) {
     return false;
