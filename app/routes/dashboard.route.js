@@ -4,6 +4,6 @@ const verifyToken = require('../middleware/auth_middleware');
 const verifyAdmin = require('../middleware/admin_middleware');
 const { getDashboard } = require('../controllers/dashboard.controller');
 
-router.get('/', verifyToken, verifyAdmin, getDashboard);
+router.get('/summary', verifyToken, verifyAdmin, getDashboard);
 
 module.exports = router;
