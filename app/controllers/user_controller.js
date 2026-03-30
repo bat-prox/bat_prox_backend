@@ -99,6 +99,7 @@ const getUser = async (req, res) => {
               ${batproxUsernameSelect}, ${batproxPasswordSelect}, ${isPlayStoreSelect}, ${balanceSelect}
        FROM users
        WHERE ${whereClause}
+       ORDER BY created_at DESC, id DESC
        LIMIT ? OFFSET ?`,
       [...filterParams, limit, offset]
     );
