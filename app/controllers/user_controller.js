@@ -428,11 +428,14 @@ const loginUser = async (req, res) => {
 
   try {
     const hasIsDeleted = await hasUsersColumn('is_deleted');
-    if (!hasIsDeleted) {
-      return sendError(res, 'is_deleted column missing. Run migration first.', 400, 'BAD_REQUEST');
-    }
+    const isDeletedSelect = hasIsDeleted ? 'is_deleted' : '0 AS is_deleted';
 
-    const [rows] = await db.query('SELECT id, name, phone, password, token_version, refresh_token, is_deleted FROM users WHERE phone = ?', [phone]);
+    const [rows] = await db.query(
+      `SELECT id, name, phone, password, token_version, refresh_token, ${isDeletedSelect}
+       FROM users
+       WHERE phone = ?`,
+      [phone]
+    );
 
     if (rows.length === 0) {
       return sendError(res, 'Invalid credentials', 401, 'UNAUTHORIZED');
@@ -630,10 +633,6 @@ const refreshToken = async (req, res) => {
 
   try {
     const hasIsDeleted = await hasUsersColumn('is_deleted');
-    if (!hasIsDeleted) {
-      return sendError(res, 'is_deleted column missing. Run migration first.', 400, 'BAD_REQUEST');
-    }
-
     const payload = jwt.verify(refreshToken, refreshSecret);
     if (payload.type !== 'refresh') {
       return sendError(res, 'Refresh token must not be used to access resources', 401, 'UNAUTHORIZED');
@@ -644,7 +643,7 @@ const refreshToken = async (req, res) => {
     if (rows.length === 0) return sendError(res, 'User not found', 401, 'UNAUTHORIZED');
 
     const user = rows[0];
-    if (Number(user.is_deleted || 0) === 1) {
+    if (hasIsDeleted && Number(user.is_deleted || 0) === 1) {
       return sendError(res, 'Your account has been deleted. Contact support.', 403, 'FORBIDDEN');
     }
 

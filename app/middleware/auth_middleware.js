@@ -3,6 +3,11 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { sendError } = require('../utils/response');
 
+const hasUsersColumn = async (columnName) => {
+  const [rows] = await db.query('SHOW COLUMNS FROM users LIKE ?', [columnName]);
+  return rows.length > 0;
+};
+
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
@@ -24,12 +29,20 @@ const verifyToken = async (req, res, next) => {
       return sendError(res, 'Authentication problem — Invalid token payload.', 401, 'UNAUTHORIZED');
     }
 
-    const [rows] = await db.query('SELECT token_version, IFNULL(is_deleted, 0) AS is_deleted FROM users WHERE id = ?', [decoded.id]);
+    const hasIsDeleted = await hasUsersColumn('is_deleted');
+    const isDeletedSelect = hasIsDeleted ? 'IFNULL(is_deleted, 0) AS is_deleted' : '0 AS is_deleted';
+
+    const [rows] = await db.query(
+      `SELECT token_version, ${isDeletedSelect}
+       FROM users
+       WHERE id = ?`,
+      [decoded.id]
+    );
     if (rows.length === 0) {
       return sendError(res, 'Authentication problem — User not found.', 401, 'UNAUTHORIZED');
     }
 
-    if (Number(rows[0].is_deleted || 0) === 1) {
+    if (hasIsDeleted && Number(rows[0].is_deleted || 0) === 1) {
       return sendError(res, 'Your account has been deleted. Contact support.', 401, 'UNAUTHORIZED');
     }
 

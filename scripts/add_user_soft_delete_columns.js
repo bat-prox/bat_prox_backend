@@ -29,12 +29,18 @@ async function ensureUserSoftDeleteColumns() {
     } else {
       console.log('deleted_at column already exists');
     }
-
-    process.exit(0);
   } catch (err) {
     console.error('Failed to ensure soft delete columns:', err.message || err);
-    process.exit(1);
+    throw err;
   }
 }
 
-ensureUserSoftDeleteColumns();
+if (require.main === module) {
+  ensureUserSoftDeleteColumns()
+    .then(() => process.exit(0))
+    .catch(() => process.exit(1));
+}
+
+module.exports = {
+  ensureUserSoftDeleteColumns
+};

@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "cross-env PORT=5000 nodemon server.js"
+    "start": "node server.js",
+    "dev": "cross-env PORT=5000 nodemon server.js",
+    "migrate:soft-delete": "node scripts/add_user_soft_delete_columns.js",
+    "migrate:startup": "node scripts/run_startup_migrations.js"
   },
   "keywords": [],
   "author": "",

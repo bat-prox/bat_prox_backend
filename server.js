@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { runStartupMigrations } = require('./scripts/run_startup_migrations');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -21,7 +22,9 @@ const defaultAllowedOrigins = [
   'https://batprox.com',
   'https://www.batprox.com',
   'http://batprox.com',
-  'http://www.batprox.com'
+  'http://www.batprox.com',
+  'http://localhost:3000',
+  'http://localhost:5000'
 ];
 
 const envAllowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
@@ -31,20 +34,38 @@ const envAllowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
 
 const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...envAllowedOrigins]));
 
+const normalizeOrigin = (origin) => {
+  if (!origin || typeof origin !== 'string') return '';
+  return origin.trim().replace(/\/$/, '').toLowerCase();
+};
+
+const isAllowedOrigin = (origin) => {
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) return true;
+
+  const normalizedAllowed = allowedOrigins.map(normalizeOrigin);
+  if (normalizedAllowed.includes(normalizedOrigin)) {
+    return true;
+  }
+
+  try {
+    const { hostname } = new URL(normalizedOrigin);
+    return hostname === 'batprox.com' || hostname.endsWith('.batprox.com');
+  } catch (err) {
+    return false;
+  }
+};
+
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       return callback(null, true);
     }
 
     return callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
   credentials: true,
   optionsSuccessStatus: 204
 };
@@ -76,8 +97,18 @@ app.use('/api/payment', payment_routes);
 app.use('/dashboard', dashboard_routes);
 app.use('/api/dashboard', dashboard_routes);
 
+const startServer = async () => {
+  try {
+    await runStartupMigrations({ failFast: true });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-});
+    // Start server
+    app.listen(PORT, () => {
+      console.log(`Server is running on http://localhost:${PORT}`);
+    });
+  } catch (err) {
+    console.error('Startup migration failed. Server not started.', err && err.message ? err.message : err);
+    process.exit(1);
+  }
+};
+
+startServer();
