@@ -12,6 +12,7 @@ const {
   loginUser,
   refreshToken,
   logoutUser,
+  deleteAccount,
   updateUser,
   deleteUser,
   uploadMedia,
@@ -31,6 +32,7 @@ router.post('/login', upload.none(), loginUser);
 router.post('/forgot_password', upload.none(), createForgotPasswordRequest);
 router.post('/refresh-token', upload.none(), refreshToken);
 router.post('/logout', verifyToken, logoutUser);
+router.delete('/delete-account', verifyToken, deleteAccount);
 router.get('/admin/forgot_password_requests', verifyToken, verifyAdmin, getForgotPasswordRequests);
 router.get('/admin/user/:id', verifyToken, verifyAdmin, getUserByAdmin);
 router.put('/admin/user/:id', verifyToken, verifyAdmin, upload.none(), updateUserByAdmin);

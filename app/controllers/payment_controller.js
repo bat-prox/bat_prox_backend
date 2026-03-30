@@ -354,16 +354,57 @@ const withdrawAmount = async (req, res) => {
   const transactionId = `W${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
   try {
+    const [
+      hasFromAccount,
+      hasFromBank,
+      hasFromAccountTitle,
+      hasToAccountNo,
+      hasToBank,
+      hasToAccountTitle
+    ] = await Promise.all([
+      hasTableColumn('transactions', 'from_account'),
+      hasTableColumn('transactions', 'from_bank'),
+      hasTableColumn('transactions', 'from_account_title'),
+      hasTableColumn('transactions', 'to_account_no'),
+      hasTableColumn('transactions', 'to_bank'),
+      hasTableColumn('transactions', 'to_account_title')
+    ]);
+
+    if (!hasToAccountNo || !hasToBank || !hasToAccountTitle) {
+      return sendError(res, 'Transactions table columns missing. Please run migration script first.', 500, 'INTERNAL_SERVER_ERROR');
+    }
+
     const [existingTx] = await db.query('SELECT id FROM transactions WHERE transaction_id = ? LIMIT 1', [transactionId]);
     if (existingTx.length > 0) {
       return sendError(res, 'Transaction ID already exists', 400, 'BAD_REQUEST');
     }
 
+    const insertColumns = ['user_id', 'amount', 'transaction_id'];
+    const insertValues = [user_id, parsedAmount, transactionId];
+
+    if (hasFromAccount) {
+      insertColumns.push('from_account');
+      insertValues.push('');
+    }
+
+    if (hasFromBank) {
+      insertColumns.push('from_bank');
+      insertValues.push('');
+    }
+
+    if (hasFromAccountTitle) {
+      insertColumns.push('from_account_title');
+      insertValues.push('');
+    }
+
+    insertColumns.push('to_account_no', 'to_bank', 'to_account_title', 'status', 'type');
+    insertValues.push(account_number, bank_name, account_title, 'pending', 'withdraw');
+
+    const placeholders = insertColumns.map(() => '?').join(', ');
+
     const [result] = await db.query(
-      `INSERT INTO transactions (
-          user_id, amount, transaction_id, to_account_no, to_bank, to_account_title, status, type
-      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 'withdraw')`,
-      [user_id, parsedAmount, transactionId, account_number, bank_name, account_title]
+      `INSERT INTO transactions (${insertColumns.join(', ')}) VALUES (${placeholders})`,
+      insertValues
     );
 
     return sendSuccess(
@@ -378,6 +419,14 @@ const withdrawAmount = async (req, res) => {
       201
     );
   } catch (err) {
+    if (err && err.code === 'ER_NO_SUCH_TABLE') {
+      return sendError(res, 'Transactions table missing. Please run migration script first.', 500, 'INTERNAL_SERVER_ERROR');
+    }
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      return sendError(res, 'Transactions schema mismatch. Please run migration script first.', 500, 'INTERNAL_SERVER_ERROR');
+    }
+
+    console.error('withdrawAmount error:', err && err.code, err && err.sqlMessage ? err.sqlMessage : err);
     return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
   }
 };

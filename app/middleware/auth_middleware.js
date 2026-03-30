@@ -24,9 +24,13 @@ const verifyToken = async (req, res, next) => {
       return sendError(res, 'Authentication problem — Invalid token payload.', 401, 'UNAUTHORIZED');
     }
 
-    const [rows] = await db.query('SELECT token_version FROM users WHERE id = ?', [decoded.id]);
+    const [rows] = await db.query('SELECT token_version, IFNULL(is_deleted, 0) AS is_deleted FROM users WHERE id = ?', [decoded.id]);
     if (rows.length === 0) {
       return sendError(res, 'Authentication problem — User not found.', 401, 'UNAUTHORIZED');
+    }
+
+    if (Number(rows[0].is_deleted || 0) === 1) {
+      return sendError(res, 'Your account has been deleted. Contact support.', 401, 'UNAUTHORIZED');
     }
 
     const dbVersion = rows[0].token_version || 0;

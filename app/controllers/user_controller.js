@@ -427,13 +427,22 @@ const loginUser = async (req, res) => {
   }
 
   try {
-    const [rows] = await db.query('SELECT id, name, phone, password, token_version, refresh_token FROM users WHERE phone = ?', [phone]);
+    const hasIsDeleted = await hasUsersColumn('is_deleted');
+    if (!hasIsDeleted) {
+      return sendError(res, 'is_deleted column missing. Run migration first.', 400, 'BAD_REQUEST');
+    }
+
+    const [rows] = await db.query('SELECT id, name, phone, password, token_version, refresh_token, is_deleted FROM users WHERE phone = ?', [phone]);
 
     if (rows.length === 0) {
       return sendError(res, 'Invalid credentials', 401, 'UNAUTHORIZED');
     }
 
     const user = rows[0];
+    if (Number(user.is_deleted || 0) === 1) {
+      return sendError(res, 'Your account has been deleted. Contact support.', 403, 'FORBIDDEN');
+    }
+
     const passwordMatch = await bcrypt.compare(password, user.password);
 
     if (!passwordMatch) {
@@ -522,8 +531,8 @@ const registerUser = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await db.query(
-      'INSERT INTO users (name, phone, password, token_version, isPlayStore) VALUES (?, ?, ?, ?, ?)',
-      [name, phone, hashedPassword, 0, normalizedIsPlayStore]
+      'INSERT INTO users (name, phone, password, token_version, isPlayStore, status) VALUES (?, ?, ?, ?, ?, ?)',
+      [name, phone, hashedPassword, 0, normalizedIsPlayStore, 'inactive']
     );
 
     const accessToken = jwt.sign({ id: result.insertId, phone, token_version: 0, type: 'access' }, secretKey, { expiresIn: '1d' });
@@ -620,6 +629,11 @@ const refreshToken = async (req, res) => {
   if (!refreshToken) return sendError(res, 'Refresh token required', 401, 'UNAUTHORIZED');
 
   try {
+    const hasIsDeleted = await hasUsersColumn('is_deleted');
+    if (!hasIsDeleted) {
+      return sendError(res, 'is_deleted column missing. Run migration first.', 400, 'BAD_REQUEST');
+    }
+
     const payload = jwt.verify(refreshToken, refreshSecret);
     if (payload.type !== 'refresh') {
       return sendError(res, 'Refresh token must not be used to access resources', 401, 'UNAUTHORIZED');
@@ -630,6 +644,10 @@ const refreshToken = async (req, res) => {
     if (rows.length === 0) return sendError(res, 'User not found', 401, 'UNAUTHORIZED');
 
     const user = rows[0];
+    if (Number(user.is_deleted || 0) === 1) {
+      return sendError(res, 'Your account has been deleted. Contact support.', 403, 'FORBIDDEN');
+    }
+
     if (!user.refresh_token || user.refresh_token !== refreshToken) {
       return sendError(res, 'Invalid refresh token', 403, 'FORBIDDEN');
     }
@@ -674,6 +692,50 @@ const logoutUser = async (req, res) => {
     await db.query('UPDATE users SET token_version = token_version + 1, refresh_token = NULL WHERE id = ?', [userId]);
 
     return sendSuccess(res, 'Logged out successfully', {}, 200);
+  } catch (err) {
+    return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
+  }
+};
+
+const deleteAccount = async (req, res) => {
+  const userId = req.user && req.user.id;
+
+  if (!userId) {
+    return sendError(res, 'Authentication problem — user not found in token.', 401, 'UNAUTHORIZED');
+  }
+
+  try {
+    const hasIsDeleted = await hasUsersColumn('is_deleted');
+    const hasDeletedAt = await hasUsersColumn('deleted_at');
+
+    if (!hasIsDeleted || !hasDeletedAt) {
+      return sendError(res, 'Soft delete columns missing. Run migration first.', 400, 'BAD_REQUEST');
+    }
+
+    const [rows] = await db.query('SELECT id, is_deleted FROM users WHERE id = ? LIMIT 1', [userId]);
+    if (rows.length === 0) {
+      return sendError(res, 'User not found', 404, 'NOT_FOUND');
+    }
+
+    if (Number(rows[0].is_deleted || 0) === 1) {
+      return sendSuccess(res, 'Account deleted successfully', {}, 200);
+    }
+
+    const hasStatus = await hasUsersColumn('status');
+    const setClauses = [
+      'is_deleted = 1',
+      'deleted_at = CURRENT_TIMESTAMP',
+      'token_version = token_version + 1',
+      'refresh_token = NULL'
+    ];
+
+    if (hasStatus) {
+      setClauses.push("status = 'inactive'");
+    }
+
+    await db.query(`UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`, [userId]);
+
+    return sendSuccess(res, 'Account deleted successfully', {}, 200);
   } catch (err) {
     return sendError(res, 'Database error', 500, 'INTERNAL_SERVER_ERROR');
   }
@@ -752,6 +814,7 @@ module.exports = {
   loginUser,
   refreshToken,
   logoutUser,
+  deleteAccount,
   updateUser,
   deleteUser,
   uploadMedia,
