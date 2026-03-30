@@ -29,6 +29,7 @@ router.post('/admin/add', verifyToken, verifyAdmin, upload.none(), addPaymentMet
 router.get('/admin/all', verifyToken, verifyAdmin, getAllPaymentMethodsAdmin);
 router.put('/admin/:id', verifyToken, verifyAdmin, upload.none(), updatePaymentMethod);
 router.delete('/admin/:id', verifyToken, verifyAdmin, upload.none(), deletePaymentMethod);
+router.delete('/admin/payment-method/:id', verifyToken, verifyAdmin, upload.none(), deletePaymentMethod);
 router.get('/admin/deposits', verifyToken, verifyAdmin, getDepositRequests);
 router.put('/admin/deposits/:id/status', verifyToken, verifyAdmin, updateDepositStatus);
 router.get('/admin/withdraws', verifyToken, verifyAdmin, getWithdrawRequests);

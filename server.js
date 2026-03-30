@@ -17,6 +17,8 @@ const users_routes=require('./app/routes/users_route');
 const tasks_routes=require('./app/routes/tasks_route');
 const payment_routes=require('./app/routes/payment_route');
 const dashboard_routes=require('./app/routes/dashboard.route');
+const app_config_routes=require('./app/routes/appConfigRoutes');
+const app_config_admin_routes=require('./app/routes/appConfigAdminRoutes');
 
 const defaultAllowedOrigins = [
   'https://batprox.com',
@@ -100,6 +102,8 @@ app.use('/payment', payment_routes);
 app.use('/api/payment', payment_routes);
 app.use('/dashboard', dashboard_routes);
 app.use('/api/dashboard', dashboard_routes);
+app.use('/api/app-config', app_config_routes);
+app.use('/api/admin/app-config', app_config_admin_routes);
 
 const startServer = async () => {
   try {

@@ -176,8 +176,13 @@ const deletePaymentMethod = async (req, res) => {
     return sendError(res, 'Payment method id required', 400, 'BAD_REQUEST');
   }
 
+  const paymentMethodId = Number(id);
+  if (!Number.isInteger(paymentMethodId) || paymentMethodId <= 0) {
+    return sendError(res, 'Invalid payment method id', 400, 'BAD_REQUEST');
+  }
+
   try {
-    const [result] = await db.query('DELETE FROM payment_methods WHERE id = ?', [id]);
+    const [result] = await db.query('DELETE FROM payment_methods WHERE id = ?', [paymentMethodId]);
 
     if (result.affectedRows === 0) {
       return sendError(res, 'Payment method not found', 404, 'NOT_FOUND');

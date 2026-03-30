@@ -2,6 +2,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const STARTUP_MIGRATION_SCRIPTS = [
+  'create_app_config_table.js',
   'create_tasks_table.js',
   'create_payment_methods_table.js',
   'create_forgot_password_requests_table.js',
