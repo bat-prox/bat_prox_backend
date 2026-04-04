@@ -93,6 +93,7 @@ app.use((req, res, next) => {
 });
 
 app.use(express.static('public'));
+
 app.use('/user',users_routes);
 app.use('/api/user',users_routes);
 app.use('/uploads', express.static(uploadsDir),users_routes);
