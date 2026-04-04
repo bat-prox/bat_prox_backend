@@ -42,6 +42,42 @@ const hasTableColumn = async (tableName, columnName) => {
   return rows.length > 0;
 };
 
+const buildTransactionId = (prefix = 'TX') => `${prefix}${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+const getUniqueTransactionId = async (candidate, prefix = 'TX', connection = db) => {
+  let nextTransactionId = candidate || buildTransactionId(prefix);
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const [rows] = await connection.query('SELECT id FROM transactions WHERE transaction_id = ? LIMIT 1', [nextTransactionId]);
+    if (rows.length === 0) {
+      return nextTransactionId;
+    }
+
+    nextTransactionId = buildTransactionId(prefix);
+  }
+
+  return `${prefix}${Date.now()}${Math.floor(Math.random() * 1000000)}`;
+};
+
+const insertTransactionWithUniqueId = async (queryText, createParams, initialTransactionId, prefix = 'TX', connection = db) => {
+  let nextTransactionId = await getUniqueTransactionId(initialTransactionId, prefix, connection);
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const [result] = await connection.query(queryText, createParams(nextTransactionId));
+      return { result, transactionId: nextTransactionId };
+    } catch (err) {
+      if (!err || err.code !== 'ER_DUP_ENTRY') {
+        throw err;
+      }
+
+      nextTransactionId = await getUniqueTransactionId(null, prefix, connection);
+    }
+  }
+
+  throw new Error('Unable to generate unique transaction ID');
+};
+
 // Admin adds a new payment method
 const addPaymentMethod = async (req, res) => {
   const { title, account_no, bank_name, bank_icon } = req.body || {};
@@ -198,11 +234,12 @@ const deletePaymentMethod = async (req, res) => {
 const depositAmount = async (req, res) => {
   const { toAccountNo, toBank, toAccountTitle, fromAccount, fromBank, fromAccountTitle, amount, transactionId } = req.body || {};
   const recipt = req.file ? req.file.filename : null;
+  const requestedTransactionId = typeof transactionId === 'string' ? transactionId.trim() : '';
 
-  if (!toAccountNo || !toBank || !toAccountTitle || !fromAccount || !fromBank || !fromAccountTitle || !amount || !transactionId) {
+  if (!toAccountNo || !toBank || !toAccountTitle || !fromAccount || !fromBank || !fromAccountTitle || !amount) {
     return sendError(
       res,
-      'Missing required fields: toAccountNo, toBank, toAccountTitle, fromAccount, fromBank, fromAccountTitle, amount, transactionId',
+      'Missing required fields: toAccountNo, toBank, toAccountTitle, fromAccount, fromBank, fromAccountTitle, amount',
       400,
       'BAD_REQUEST'
     );
@@ -250,17 +287,25 @@ const depositAmount = async (req, res) => {
     // Add recipt column to existing tables that don't have it yet
     await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS recipt VARCHAR(255) NULL`);
 
-    const [existingTx] = await db.query('SELECT id FROM transactions WHERE transaction_id = ? LIMIT 1', [transactionId]);
-    if (existingTx.length > 0) {
-      return sendError(res, 'Transaction ID already exists', 400, 'BAD_REQUEST');
-    }
-
-    const [result] = await db.query(
+    const { result, transactionId: resolvedTransactionId } = await insertTransactionWithUniqueId(
       `INSERT INTO transactions (
           user_id, amount, transaction_id, from_account, from_bank, from_account_title,
           to_account_no, to_bank, to_account_title, recipt, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [user_id, parsedAmount, transactionId, fromAccount, fromBank, fromAccountTitle, toAccountNo, toBank, toAccountTitle, recipt]
+      currentTransactionId => [
+        user_id,
+        parsedAmount,
+        currentTransactionId,
+        fromAccount,
+        fromBank,
+        fromAccountTitle,
+        toAccountNo,
+        toBank,
+        toAccountTitle,
+        recipt
+      ],
+      requestedTransactionId,
+      'D'
     );
 
     return sendSuccess(
@@ -268,7 +313,7 @@ const depositAmount = async (req, res) => {
       'Deposit recorded successfully (pending confirmation)',
       {
         id: result.insertId,
-        transaction_id: transactionId,
+        transaction_id: resolvedTransactionId,
         amount: parsedAmount,
         status: 'pending',
         recipt: recipt || null,
@@ -356,8 +401,6 @@ const withdrawAmount = async (req, res) => {
     return sendError(res, 'Amount must be positive number', 400, 'BAD_REQUEST');
   }
 
-  const transactionId = `W${Date.now()}${Math.floor(Math.random() * 1000)}`;
-
   try {
     const hasBalance = await hasUsersColumn('balance');
     if (!hasBalance) {
@@ -400,14 +443,8 @@ const withdrawAmount = async (req, res) => {
         return sendError(res, 'Insufficient balance', 400, 'BAD_REQUEST');
       }
 
-      const [existingTx] = await connection.query('SELECT id FROM transactions WHERE transaction_id = ? LIMIT 1', [transactionId]);
-      if (existingTx.length > 0) {
-        await connection.rollback();
-        return sendError(res, 'Transaction ID already exists', 400, 'BAD_REQUEST');
-      }
-
       const insertColumns = ['user_id', 'amount', 'transaction_id'];
-      const insertValues = [user_id, parsedAmount, transactionId];
+      const insertValues = [user_id, parsedAmount];
 
       if (hasFromAccount) {
         insertColumns.push('from_account');
@@ -429,9 +466,12 @@ const withdrawAmount = async (req, res) => {
 
       const placeholders = insertColumns.map(() => '?').join(', ');
 
-      const [result] = await connection.query(
+      const { result, transactionId } = await insertTransactionWithUniqueId(
         `INSERT INTO transactions (${insertColumns.join(', ')}) VALUES (${placeholders})`,
-        insertValues
+        currentTransactionId => [user_id, parsedAmount, currentTransactionId, ...insertValues.slice(2)],
+        null,
+        'W',
+        connection
       );
 
       await connection.query('UPDATE users SET balance = balance - ? WHERE id = ?', [parsedAmount, user_id]);
