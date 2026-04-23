@@ -8,6 +8,18 @@ const { sendSuccess, sendError } = require('../utils/response');
 
 const secretKey = process.env.JWT_SECRET;
 const refreshSecret = process.env.JWT_REFRESH_SECRET || secretKey;
+const ACCESS_TOKEN_EXPIRES_IN = '90d';
+const ACCESS_TOKEN_EXPIRES_IN_SECONDS = 90 * 24 * 60 * 60;
+const REFRESH_TOKEN_EXPIRES_IN = '180d';
+
+const buildExpiryDate = (expiresInSeconds) =>
+  new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+
+const signAccessToken = (payload) =>
+  jwt.sign(payload, secretKey, { expiresIn: ACCESS_TOKEN_EXPIRES_IN });
+
+const signRefreshToken = (payload) =>
+  jwt.sign(payload, refreshSecret, { expiresIn: REFRESH_TOKEN_EXPIRES_IN });
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -456,15 +468,11 @@ const loginUser = async (req, res) => {
     const currentVersion = user.token_version || 0;
     const newVersion = currentVersion + 1;
 
-    const refreshTokenStr = jwt.sign({ id: user.id, token_version: newVersion, type: 'refresh' }, refreshSecret, { expiresIn: '7d' });
+    const refreshTokenStr = signRefreshToken({ id: user.id, token_version: newVersion, type: 'refresh' });
 
     await db.query('UPDATE users SET token_version = ?, refresh_token = ? WHERE id = ?', [newVersion, refreshTokenStr, user.id]);
 
-    const expiresIn = '240h';
-    const accessToken = jwt.sign({ id: user.id, phone: user.phone, token_version: newVersion, type: 'access' }, secretKey, { expiresIn });
-
-    const expiresInSeconds = 240 * 60 * 60;
-    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+    const accessToken = signAccessToken({ id: user.id, phone: user.phone, token_version: newVersion, type: 'access' });
 
     return sendSuccess(
       res,
@@ -473,8 +481,8 @@ const loginUser = async (req, res) => {
         tokens: {
           accessToken,
           refreshToken: refreshTokenStr,
-          expiresIn: expiresInSeconds,
-          expiresAt
+          expiresIn: ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+          expiresAt: buildExpiryDate(ACCESS_TOKEN_EXPIRES_IN_SECONDS)
         },
         user: {
           id: user.id,
@@ -539,8 +547,8 @@ const registerUser = async (req, res) => {
       [name, phone, hashedPassword, 0, normalizedIsPlayStore, 'inactive']
     );
 
-    const accessToken = jwt.sign({ id: result.insertId, phone, token_version: 0, type: 'access' }, secretKey, { expiresIn: '1d' });
-    const refreshTokenStr = jwt.sign({ id: result.insertId, token_version: 0, type: 'refresh' }, refreshSecret, { expiresIn: '7d' });
+    const accessToken = signAccessToken({ id: result.insertId, phone, token_version: 0, type: 'access' });
+    const refreshTokenStr = signRefreshToken({ id: result.insertId, token_version: 0, type: 'refresh' });
 
     await db.query('UPDATE users SET refresh_token = ? WHERE id = ?', [refreshTokenStr, result.insertId]);
 
@@ -551,8 +559,8 @@ const registerUser = async (req, res) => {
         tokens: {
           accessToken,
           refreshToken: refreshTokenStr,
-          expiresIn: 24 * 60 * 60,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+          expiresIn: ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+          expiresAt: buildExpiryDate(ACCESS_TOKEN_EXPIRES_IN_SECONDS)
         },
         user: {
           id: result.insertId,
@@ -657,8 +665,8 @@ const refreshToken = async (req, res) => {
       return sendError(res, 'Refresh token invalidated', 403, 'FORBIDDEN');
     }
 
-    const newAccessToken = jwt.sign({ id: user.id, phone: user.phone, token_version: dbVersion, type: 'access' }, secretKey, { expiresIn: '1h' });
-    const newRefreshToken = jwt.sign({ id: user.id, token_version: dbVersion, type: 'refresh' }, refreshSecret, { expiresIn: '7d' });
+    const newAccessToken = signAccessToken({ id: user.id, phone: user.phone, token_version: dbVersion, type: 'access' });
+    const newRefreshToken = signRefreshToken({ id: user.id, token_version: dbVersion, type: 'refresh' });
 
     await db.query('UPDATE users SET refresh_token = ? WHERE id = ?', [newRefreshToken, user.id]);
 
@@ -669,8 +677,8 @@ const refreshToken = async (req, res) => {
         tokens: {
           accessToken: newAccessToken,
           refreshToken: newRefreshToken,
-          expiresIn: 60 * 60,
-          expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+          expiresIn: ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+          expiresAt: buildExpiryDate(ACCESS_TOKEN_EXPIRES_IN_SECONDS)
         },
         user: sanitizeUser(user)
       },
