@@ -7,6 +7,7 @@ const path = require('path');
 const { runStartupMigrations } = require('./scripts/run_startup_migrations');
 const app = express();
 const PORT = process.env.PORT || 5000;
+const maxRequestSize = process.env.MAX_REQUEST_SIZE || '25mb';
 
 const uploadsDir = path.resolve(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -78,8 +79,8 @@ const corsOptions = {
 // Middleware (optional)
 app.use(cors(corsOptions));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: maxRequestSize }));
+app.use(express.urlencoded({ extended: true, limit: maxRequestSize }));
 
 // Simple response-time logging middleware
 app.use((req, res, next) => {

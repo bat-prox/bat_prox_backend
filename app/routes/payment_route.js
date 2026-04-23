@@ -12,7 +12,7 @@ const {
     updatePaymentMethod,
     deletePaymentMethod,
     depositAmount,
-    uploadReceipt,
+    uploadReceiptSingle,
     getDepositRequests,
     updateDepositStatus,
     updateWithdrawStatus,
@@ -35,7 +35,7 @@ router.put('/admin/deposits/:id/status', verifyToken, verifyAdmin, updateDeposit
 router.get('/admin/withdraws', verifyToken, verifyAdmin, getWithdrawRequests);
 router.put('/admin/withdraws/:id/status', verifyToken, verifyAdmin, updateWithdrawStatus);
 router.post('/user/withdraw', verifyToken, upload.none(), withdrawAmount);
-router.post('/user/deposit', verifyToken, uploadReceipt.single('recipt'), depositAmount);
+router.post('/user/deposit', verifyToken, uploadReceiptSingle, depositAmount);
 router.get('/user/requests', verifyToken, getUserPaymentRequests);
 
 module.exports = router;

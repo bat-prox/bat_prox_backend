@@ -5,6 +5,9 @@ const fs = require('fs');
 const path = require('path');
 
 const uploadsDir = path.resolve(__dirname, '../../uploads');
+const maxReceiptSizeMb = Math.max(1, Number(process.env.RECEIPT_MAX_FILE_SIZE_MB || 25));
+const maxReceiptSizeBytes = maxReceiptSizeMb * 1024 * 1024;
+
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -29,8 +32,22 @@ const uploadReceipt = multer({
       cb(new Error('Only image (jpg, png, gif, webp) or PDF files are allowed!'), false);
     }
   },
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+  limits: { fileSize: maxReceiptSizeBytes }
 });
+
+const uploadReceiptSingle = (req, res, next) => {
+  uploadReceipt.single('recipt')(req, res, (err) => {
+    if (!err) {
+      return next();
+    }
+
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return sendError(res, `Receipt file too large. Max allowed size is ${maxReceiptSizeMb}MB.`, 413, 'PAYLOAD_TOO_LARGE');
+    }
+
+    return sendError(res, err.message || 'Invalid receipt upload', 400, 'BAD_REQUEST');
+  });
+};
 
 const hasUsersColumn = async (columnName) => {
   const [rows] = await db.query('SHOW COLUMNS FROM users LIKE ?', [columnName]);
@@ -835,6 +852,7 @@ module.exports = {
   deletePaymentMethod,
   depositAmount,
   uploadReceipt,
+  uploadReceiptSingle,
   withdrawAmount,
   getDepositRequests,
   updateDepositStatus,
