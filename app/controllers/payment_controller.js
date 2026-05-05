@@ -455,10 +455,6 @@ const withdrawAmount = async (req, res) => {
       }
 
       const currentBalance = Number(userRows[0].balance || 0);
-      if (parsedAmount > currentBalance) {
-        await connection.rollback();
-        return sendError(res, 'Insufficient balance', 400, 'BAD_REQUEST');
-      }
 
       const insertColumns = ['user_id', 'amount', 'transaction_id'];
       const insertValues = [user_id, parsedAmount];
