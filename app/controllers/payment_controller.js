@@ -365,6 +365,11 @@ const getDepositRequests = async (req, res) => {
   const whereClause = conditions.join(' AND ');
 
   try {
+    const hasBatproxUsername = await hasUsersColumn('batprox_username');
+    const hasBatproxPassword = await hasUsersColumn('batprox_password');
+    const batproxUsernameSelect = hasBatproxUsername ? 'u.batprox_username AS batprox_username' : 'NULL AS batprox_username';
+    const batproxPasswordSelect = hasBatproxPassword ? 'u.batprox_password AS batprox_password' : 'NULL AS batprox_password';
+
     const [countResult] = await db.query(
       `SELECT COUNT(*) as total
        FROM transactions t
@@ -376,6 +381,7 @@ const getDepositRequests = async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT t.*, u.name AS user_name, u.phone AS user_phone
+              , ${batproxUsernameSelect}, ${batproxPasswordSelect}
        FROM transactions t
        LEFT JOIN users u ON u.id = t.user_id
        WHERE ${whereClause}
